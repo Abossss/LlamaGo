@@ -13,7 +13,6 @@ pub fn check_config(app_handle: AppHandle) -> Result<serde_json::Value, String> 
         .as_ref()
         .and_then(|m| cfg.model_aliases.get(m).cloned());
     Ok(serde_json::json!({
-        "exec_path": cfg.exec_path,
         "model_path": cfg.model_path,
         "config_path": config::config_path_str(&app_handle),
         "model_aliases": cfg.model_aliases,
@@ -30,7 +29,6 @@ pub fn check_config(app_handle: AppHandle) -> Result<serde_json::Value, String> 
 #[tauri::command]
 pub fn save_config(
     app_handle: AppHandle,
-    exec_path: Option<String>,
     model_path: Option<String>,
     model_aliases: Option<HashMap<String, String>>,
     advanced: Option<AdvancedParams>,
@@ -39,9 +37,6 @@ pub fn save_config(
     web_port: Option<i64>,
 ) -> Result<(), String> {
     let mut cfg = config::read_config(&app_handle);
-    if let Some(v) = exec_path {
-        cfg.exec_path = Some(v);
-    }
     if let Some(v) = model_path {
         cfg.model_path = Some(v);
     }

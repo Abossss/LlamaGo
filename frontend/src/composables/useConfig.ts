@@ -2,7 +2,7 @@ import { ref } from 'vue';
 import { cmd } from '../lib/tauri';
 import { hasTauri } from '../lib/hasTauri';
 import { MAX_WEB_PORT, MIN_WEB_PORT } from '../lib/const';
-import { execPath, modelPath, models } from './useEnvModels';
+import { modelPath, models } from './useEnvModels';
 import { aliases, advanced } from './useAdvanced';
 import { useToast } from './useToast';
 
@@ -30,7 +30,6 @@ export function useConfig() {
     if (!hasTauri()) return;
     try {
       const cfg = await cmd.check_config();
-      if (cfg.exec_path) execPath.value = cfg.exec_path;
       if (cfg.model_path && models.value.includes(cfg.model_path)) {
         modelPath.value = cfg.model_path;
       }
@@ -56,12 +55,11 @@ export function useConfig() {
       return;
     }
     try {
-      // Persist exec + model path, plus the current aliases, advanced set,
-      // and web port. The backend merges these into the existing config.json
-      // (a null model path keeps the previously saved selection untouched),
-      // so the Web port can also be saved before choosing a model.
+      // Persist the model path, current aliases, advanced set, and web port.
+      // The backend merges these into the existing config.json (a null model
+      // path keeps the previously saved selection untouched), so the Web port
+      // can also be saved before choosing a model.
       await cmd.save_config(
-        execPath.value || null,
         modelPath.value || null,
         aliases.value,
         advanced.value,

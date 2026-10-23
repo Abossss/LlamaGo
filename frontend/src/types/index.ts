@@ -42,7 +42,6 @@ export interface AdvancedParams {
 
 /** `check_config` return value. */
 export interface ConfigInfo {
-  exec_path: string | null;
   model_path: string | null;
   config_path: string;
   // New in the advanced-params feature.

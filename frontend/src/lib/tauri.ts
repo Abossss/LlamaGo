@@ -44,14 +44,12 @@ export const cmd = {
   get_status_full: () => invoke<StatusFull>('get_status_full'),
   check_config: () => invoke<ConfigInfo>('check_config'),
   save_config: (
-    exec_path: string | null,
     model_path: string | null,
     model_aliases?: Record<string, string> | null,
     advanced?: AdvancedParams | null,
     web_port?: number | null,
   ) =>
     invoke<void>('save_config', {
-      execPath: exec_path,
       modelPath: model_path,
       modelAliases: model_aliases,
       advanced,

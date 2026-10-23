@@ -45,9 +45,10 @@ pub struct AdvancedParams {
     pub api_key: Option<String>,
 }
 
+/// Persisted app config. The executable is not stored: it is always derived
+/// from `LLAMA_CPP_PATH`, so a stale config cannot override the environment.
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
 pub struct AppConfig {
-    pub exec_path: Option<String>,
     pub model_path: Option<String>,
     /// Per-model display alias (model path -> alias).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -105,9 +106,20 @@ mod tests {
 
     #[test]
     fn legacy_config_without_web_port_defaults_to_8080() {
-        let cfg: AppConfig = serde_json::from_str(r#"{"exec_path":null}"#).unwrap();
+        let cfg: AppConfig = serde_json::from_str(r#"{"model_path":null}"#).unwrap();
         assert_eq!(cfg.web_port, Some(DEFAULT_WEB_PORT));
         assert_eq!(cfg.web_port, Some(8080));
+    }
+
+    #[test]
+    fn legacy_exec_path_is_ignored_on_load() {
+        // Older configs stored an executable path; deserialization must keep
+        // the rest of the config but never resurrect the stale path.
+        let cfg: AppConfig = serde_json::from_str(
+            r#"{"exec_path":"C:\\old\\llama-server.exe","model_path":"C:\\models\\a.gguf"}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.model_path.as_deref(), Some("C:\\models\\a.gguf"));
     }
 
     #[test]

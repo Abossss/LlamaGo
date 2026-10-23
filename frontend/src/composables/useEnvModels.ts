@@ -31,9 +31,9 @@ export async function refreshEnv() {
     env.llamaValid = !!s.llama_valid;
     env.modelsPath = s.models_path || '';
     env.modelsValid = !!s.models_valid;
-    if (env.llamaValid) {
-      execPath.value = serverExe(env.llamaCppPath);
-    }
+    // Always derive the displayed executable from LLAMA_CPP_PATH so the UI
+    // can never show a stale path that differs from what the backend spawns.
+    execPath.value = env.llamaValid ? serverExe(env.llamaCppPath) : '';
   } catch (err) {
     useToast().showToast('读取设置失败: ' + err, 'error');
   }

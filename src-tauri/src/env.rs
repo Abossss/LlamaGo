@@ -4,6 +4,10 @@
 //! `$XDG_CONFIG_HOME/llamago/env` or `~/.config/llamago/env`).
 
 use std::path::Path;
+
+#[cfg(not(windows))]
+use std::collections::HashMap;
+#[cfg(windows)]
 use std::process::Command;
 
 pub const ENV_LLAMA_CPP: &str = "LLAMA_CPP_PATH";
