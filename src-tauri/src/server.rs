@@ -456,10 +456,8 @@ pub fn start_server_inner(
     let stdout_secret = log_secret.clone();
     thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                relay_server_log(&ah_stdout, &l, stdout_secret.as_deref());
-            }
+        for l in reader.lines().map_while(Result::ok) {
+            relay_server_log(&ah_stdout, &l, stdout_secret.as_deref());
         }
     });
 
@@ -467,14 +465,12 @@ pub fn start_server_inner(
     let stderr_secret = log_secret;
     thread::spawn(move || {
         let reader = std::io::BufReader::new(stderr);
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                relay_server_log(
-                    &ah_stderr,
-                    &format!("[stderr] {}", l),
-                    stderr_secret.as_deref(),
-                );
-            }
+        for l in reader.lines().map_while(Result::ok) {
+            relay_server_log(
+                &ah_stderr,
+                &format!("[stderr] {}", l),
+                stderr_secret.as_deref(),
+            );
         }
     });
 
@@ -689,15 +685,14 @@ fn resolve_tray_model(app: &AppHandle) -> Option<String> {
     }
     crate::models::list_models_inner()
         .into_iter()
-        .next()
-        .map(|m| {
+        .inspect(|m| {
             crate::tray::emit_toast(
                 app,
-                &format!("未保存上次模型选择，已自动使用: {}", env::basename_of(&m)),
+                &format!("未保存上次模型选择，已自动使用: {}", env::basename_of(m)),
                 "info",
             );
-            m
         })
+        .next()
 }
 
 #[cfg(test)]

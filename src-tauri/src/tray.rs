@@ -225,7 +225,7 @@ pub fn build_tray(app: &tauri::App<Wry>) -> tauri::Result<()> {
         webui: webui_item,
     });
 
-    update_tray_menu(&handle);
+    update_tray_menu(handle);
 
     Ok(())
 }

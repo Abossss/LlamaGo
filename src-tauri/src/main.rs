@@ -9,7 +9,7 @@
 //!   - `scan`         `scan_llama_cpp` / `cancel_scan`
 //!   - `models`       `list_models`
 //!   - `server`       `start_server` / `stop_server` / `get_status` / ... +
-//!                    log relay + exit watcher
+//!     log relay + exit watcher
 //!   - `tray`         system-tray menu, show/hide, shared emit helpers
 //!   - `state`        shared `Mutex<AppState>` / `ScanControl` + constants
 //!
