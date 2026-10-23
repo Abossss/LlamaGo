@@ -39,8 +39,8 @@
 | 平台    | 包类型   | 文件                          | 适用场景           |
 | ------- | -------- | ----------------------------- | ------------------ |
 | Windows | NSIS     | `LlamaGo_0.2.0_x64-setup.exe` | 图形化安装（推荐） |
-| Windows | MSI      | `LlamaGo_0.2.0_x64.msi`       | 企业 / 静默部署    |
-| macOS   | DMG      | `LlamaGo_0.2.0_*_*.dmg`       | 拖入「应用程序」   |
+| Windows | MSI      | `LlamaGo_0.2.0_x64_*.msi`     | 企业 / 静默部署    |
+| macOS   | DMG      | `LlamaGo_0.2.0_x64.dmg` / `LlamaGo_0.2.0_aarch64.dmg` | 拖入「应用程序」 |
 | Linux   | AppImage | `*.AppImage`                  | 免安装，双击运行   |
 | Linux   | DEB      | `*.deb`                       | Debian / Ubuntu    |
 

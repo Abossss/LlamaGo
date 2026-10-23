@@ -96,8 +96,8 @@ jobs:
 
             | 平台 | 文件 |
             | ---- | ---- |
-            | Windows | `LlamaGo___VERSION___x64-setup.exe`（推荐）/ `LlamaGo___VERSION___x64.msi` |
-            | macOS | `LlamaGo___VERSION___*_*.dmg` |
+            | Windows | `LlamaGo___VERSION___x64-setup.exe`（推荐）/ `LlamaGo___VERSION___x64_*.msi` |
+            | macOS | `LlamaGo___VERSION___x64.dmg` / `LlamaGo___VERSION___aarch64.dmg` |
             | Linux | `*.AppImage` / `*.deb` |
 
             > 使用前请自行准备 llama.cpp（`llama-server`）与 `.gguf` 模型，并在设置页配置路径。
