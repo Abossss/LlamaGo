@@ -91,6 +91,7 @@ fn main() {
         })
         .manage(std::sync::Mutex::new(state::AppState::new()))
         .manage(std::sync::Mutex::new(state::ScanControl::new()))
+        .manage(state::ConfigWriteLock::new())
         .invoke_handler(tauri::generate_handler![
             cmd_config::check_config,
             cmd_config::save_config,

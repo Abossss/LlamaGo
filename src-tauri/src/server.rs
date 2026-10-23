@@ -36,9 +36,10 @@ fn push_log_history(app: &AppHandle, line: &str) {
 /// Emit a server log line and watch for bind failures (the port pre-check in
 /// `start_server_inner` is best-effort and racy, so we also react to the
 /// actual llama-server error output here).
-fn relay_server_log(app: &AppHandle, line: &str) {
-    let _ = app.emit("log-line", line);
-    push_log_history(app, line);
+fn relay_server_log(app: &AppHandle, line: &str, secret: Option<&str>) {
+    let line = redact_log_line(line, secret);
+    let _ = app.emit("log-line", &line);
+    push_log_history(app, &line);
     let lower = line.to_ascii_lowercase();
     if lower.contains("address already in use")
         || lower.contains("bind() failed")
@@ -51,6 +52,45 @@ fn relay_server_log(app: &AppHandle, line: &str) {
             "error",
         );
     }
+}
+
+/// Hide a known API key, plus any `--api-key VALUE` / `--api-key=VALUE`
+/// occurrence in case an older frontend or a manually built arg list still
+/// puts the key on the command line.
+fn redact_log_line(line: &str, known_secret: Option<&str>) -> String {
+    let mut out = match known_secret.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(secret) => line.replace(secret, "***"),
+        None => line.to_string(),
+    };
+    out = redact_api_key_flags(&out);
+    out
+}
+
+fn redact_api_key_flags(line: &str) -> String {
+    const FLAG: &str = "--api-key";
+    let mut out = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(pos) = rest.find(FLAG) {
+        let (before, after) = rest.split_at(pos);
+        out.push_str(before);
+        let tail = &after[FLAG.len()..];
+        if let Some(value) = tail.strip_prefix('=') {
+            let end = value.find(char::is_whitespace).unwrap_or(value.len());
+            out.push_str("--api-key=***");
+            rest = &value[end..];
+        } else if tail.starts_with(char::is_whitespace) {
+            let ws = tail.len() - tail.trim_start_matches(char::is_whitespace).len();
+            let value = &tail[ws..];
+            let end = value.find(char::is_whitespace).unwrap_or(value.len());
+            out.push_str("--api-key ***");
+            rest = &value[end..];
+        } else {
+            out.push_str(FLAG);
+            rest = tail;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 #[tauri::command]
@@ -148,7 +188,7 @@ pub fn start_server(
 
     // Forward the configured Web UI port to llama-server unless the caller
     // already passed an explicit --port (e.g. a future manual-args feature).
-    let configured_port = config::read_config(&app_handle).web_port;
+    let configured_port = config::read_config(&app_handle)?.web_port;
     let port = resolve_web_port_for_launch(&args, configured_port, &exec);
     let args = with_configured_web_port(&args, port);
 
@@ -276,10 +316,20 @@ pub fn start_server_inner(
         return Err("服务器已在运行中".into());
     }
 
+    let log_secret = api_key
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .map(str::to_string);
+
     let mut cmd = Command::new(executable);
     cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Pass the key through the environment instead of the command line:
+    // process listings and CLI echo can expose argv to other users.
+    if let Some(key) = log_secret.as_deref() {
+        cmd.env("LLAMA_API_KEY", key);
+    }
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
     let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
@@ -302,21 +352,23 @@ pub fn start_server_inner(
     crate::tray::emit_server_status(app_handle);
 
     let ah_stdout = app_handle.clone();
+    let stdout_secret = log_secret.clone();
     thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         for line in reader.lines() {
             if let Ok(l) = line {
-                relay_server_log(&ah_stdout, &l);
+                relay_server_log(&ah_stdout, &l, stdout_secret.as_deref());
             }
         }
     });
 
     let ah_stderr = app_handle.clone();
+    let stderr_secret = log_secret;
     thread::spawn(move || {
         let reader = std::io::BufReader::new(stderr);
         for line in reader.lines() {
             if let Ok(l) = line {
-                relay_server_log(&ah_stderr, &format!("[stderr] {}", l));
+                relay_server_log(&ah_stderr, &format!("[stderr] {}", l), stderr_secret.as_deref());
             }
         }
     });
@@ -493,7 +545,13 @@ pub fn start_server_from_tray(app: &AppHandle) {
     };
     let mut args: Vec<String> = vec!["-m".into(), model];
     // Honor the saved Web UI port, same as the command-driven start path.
-    let configured_port = config::read_config(app).web_port;
+    let configured_port = match config::read_config(app) {
+        Ok(cfg) => cfg.web_port,
+        Err(e) => {
+            crate::tray::emit_toast(app, &format!("读取配置失败: {}", e), "error");
+            return;
+        }
+    };
     let port = resolve_web_port_for_launch(&args, configured_port, &exec);
     args = with_configured_web_port(&args, port);
     let state = app.state::<StateLock>();
@@ -507,7 +565,13 @@ pub fn start_server_from_tray(app: &AppHandle) {
 /// selection if it still exists, otherwise the first available model (with a
 /// toast explaining the fallback).
 fn resolve_tray_model(app: &AppHandle) -> Option<String> {
-    let saved = config::read_config(app).model_path;
+    let saved = match config::read_config(app) {
+        Ok(cfg) => cfg.model_path,
+        Err(e) => {
+            crate::tray::emit_toast(app, &format!("读取配置失败: {}", e), "error");
+            return None;
+        }
+    };
     if let Some(m) = saved {
         if Path::new(&m).exists() {
             return Some(m);
@@ -630,5 +694,27 @@ mod tests {
             Some("http://127.0.0.1:9090")
         );
         assert_eq!(web_url_for(false, 8080), None);
+    }
+
+    #[test]
+    fn redacts_known_secret_everywhere() {
+        assert_eq!(
+            redact_log_line("auth token=super-secret done", Some("super-secret")),
+            "auth token=*** done"
+        );
+    }
+
+    #[test]
+    fn redacts_api_key_flag_forms_without_known_secret() {
+        assert_eq!(
+            redact_log_line("cmd: --api-key abc123 --port 8080", None),
+            "cmd: --api-key *** --port 8080"
+        );
+        assert_eq!(
+            redact_log_line("cmd: --api-key=abc123 --port 8080", None),
+            "cmd: --api-key=*** --port 8080"
+        );
+        assert_eq!(redact_log_line("cmd: --api-key", None), "cmd: --api-key");
+        assert_eq!(redact_log_line("plain log line", None), "plain log line");
     }
 }

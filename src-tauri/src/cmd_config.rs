@@ -1,13 +1,14 @@
 //! Tauri commands: check_config / save_config — read and merge persisted
 //! `AppConfig` (last-selected model, aliases, advanced params, web port).
-use tauri::AppHandle;
 use std::collections::HashMap;
+use tauri::{AppHandle, State};
 
 use crate::config::{self, AdvancedParams};
+use crate::state::ConfigWriteLock;
 
 #[tauri::command]
 pub fn check_config(app_handle: AppHandle) -> Result<serde_json::Value, String> {
-    let cfg = config::read_config(&app_handle);
+    let cfg = config::read_config(&app_handle)?;
     let current_alias = cfg
         .model_path
         .as_ref()
@@ -29,6 +30,7 @@ pub fn check_config(app_handle: AppHandle) -> Result<serde_json::Value, String> 
 #[tauri::command]
 pub fn save_config(
     app_handle: AppHandle,
+    write_lock: State<'_, ConfigWriteLock>,
     model_path: Option<String>,
     model_aliases: Option<HashMap<String, String>>,
     advanced: Option<AdvancedParams>,
@@ -36,25 +38,27 @@ pub fn save_config(
     // serde deserialization with an opaque error.
     web_port: Option<i64>,
 ) -> Result<(), String> {
-    let mut cfg = config::read_config(&app_handle);
-    if let Some(v) = model_path {
-        cfg.model_path = Some(v);
-    }
-    if let Some(m) = model_aliases {
-        // Merge: user-supplied entries win, but keep existing aliases for
-        // other models so switching model selections doesn't lose them.
-        for (k, v) in m {
-            if !v.trim().is_empty() {
-                cfg.model_aliases.insert(k, v);
+    let port = config::validate_web_port(web_port)?;
+    // The read-modify-write runs entirely under the write lock, so two
+    // concurrent saves cannot overwrite each other's changes.
+    config::update_config(&app_handle, &write_lock.0, move |cfg| {
+        if let Some(v) = model_path {
+            cfg.model_path = Some(v);
+        }
+        if let Some(m) = model_aliases {
+            // Merge: user-supplied entries win, but keep existing aliases for
+            // other models so switching model selections doesn't lose them.
+            for (k, v) in m {
+                if !v.trim().is_empty() {
+                    cfg.model_aliases.insert(k, v);
+                }
             }
         }
-    }
-    if let Some(a) = advanced {
-        cfg.advanced = Some(a);
-    }
-    // `web_port` is nullable: `None` clears the setting back to llama.cpp's
-    // default port, matching the UI's "留空则使用默认端口" affordance.
-    // Out-of-range values are rejected instead of being written to disk.
-    cfg.web_port = config::validate_web_port(web_port)?;
-    config::write_config(&app_handle, &cfg)
+        if let Some(a) = advanced {
+            cfg.advanced = Some(a);
+        }
+        // `web_port` is nullable: `None` clears the setting back to
+        // llama.cpp's default port, matching the UI's "留空则使用默认端口".
+        cfg.web_port = port;
+    })
 }

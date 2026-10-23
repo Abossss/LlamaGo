@@ -15,6 +15,18 @@ const pid = ref<string | null>(null);
 const livePort = ref(DEFAULT_WEB_PORT);
 const logs = ref<string[]>([]);
 
+// llama-server can be chatty (one line per request on some builds). Keep a
+// bounded buffer so a long session cannot grow the DOM/memory forever; 1500
+// plain <div>s need no virtualization.
+const MAX_LOG_LINES = 1500;
+
+function pushLog(line: string) {
+  logs.value.push(line);
+  if (logs.value.length > MAX_LOG_LINES) {
+    logs.value.splice(0, logs.value.length - MAX_LOG_LINES);
+  }
+}
+
 // Effective configured port: saved value, else llama-server's detected
 // default (custom builds often differ from 8080), else the launcher fallback.
 const configuredWebPort = computed<number>(
@@ -58,8 +70,8 @@ function buildArgs(): string[] {
   if (a.ngl != null) args.push('-ngl', String(a.ngl));
   const alias = aliases.value[modelPath.value]?.trim();
   if (alias) args.push('--alias', alias);
-  const key = a.api_key?.trim();
-  if (key) args.push('--api-key', key);
+  // The API key is passed to the backend separately and exported as
+  // LLAMA_API_KEY, never as a command-line argument.
   return args;
 }
 
@@ -80,10 +92,10 @@ async function startServer() {
     // Pick up the port the backend actually used (configured/default), even
     // if the server-status event raced with this promise.
     await syncStatus();
-    logs.value.push(`✅ 服务器已启动 (PID: ${serverPid})`);
+    pushLog(`✅ 服务器已启动 (PID: ${serverPid})`);
     useToast().showToast(`服务器已启动 (PID: ${serverPid})`, 'success');
   } catch (err) {
-    logs.value.push(`❌ 启动失败: ${err}`);
+    pushLog(`❌ 启动失败: ${err}`);
     useToast().showToast(`启动失败: ${err}`, 'error', 5000);
     running.value = false;
   }
@@ -93,7 +105,7 @@ async function stopServer() {
   if (!hasTauri()) return;
   try {
     const msg = await cmd.stop_server();
-    logs.value.push(`⏹ ${msg}`);
+    pushLog(`⏹ ${msg}`);
     useToast().showToast(msg, 'info');
   } catch (err) {
     useToast().showToast(`停止失败: ${err}`, 'error');
@@ -123,7 +135,7 @@ async function openWebUI() {
 export async function bindServerEvents() {
   if (!hasTauri()) return;
   await subscribe('process-exit', () => {
-    logs.value.push('⏹ 服务器进程已退出');
+    pushLog('⏹ 服务器进程已退出');
     useToast().showToast('服务器已停止', 'info');
   });
   await subscribe<{ running: boolean; pid: number | null; port: number }>('server-status', (e) => {
@@ -132,7 +144,7 @@ export async function bindServerEvents() {
     if (e.port) livePort.value = e.port;
   });
   await subscribe<string>('log-line', (line) => {
-    logs.value.push(line);
+    pushLog(line);
     scrollLog();
   });
   // Backfill once: a webview reload while the server is running would
@@ -142,7 +154,7 @@ export async function bindServerEvents() {
   try {
     const history = await cmd.get_log_history();
     if (history.length) {
-      logs.value = history;
+      logs.value = history.slice(-MAX_LOG_LINES);
       scrollLog();
     }
   } catch {

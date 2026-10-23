@@ -54,6 +54,16 @@ impl AppState {
     }
 }
 
+/// Serializes config read-modify-write cycles. Separate from the app-state
+/// lock so file I/O never blocks status queries.
+pub struct ConfigWriteLock(pub Mutex<()>);
+
+impl ConfigWriteLock {
+    pub fn new() -> Self {
+        Self(Mutex::new(()))
+    }
+}
+
 /// Cancellation handle for the llama.cpp directory scan.
 pub struct ScanControl {
     pub cancel_flag: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,

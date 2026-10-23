@@ -43,8 +43,10 @@ export function useConfig() {
       }
       webPort.value = cfg.web_port ?? null;
       serverDefaultWebPort.value = cfg.server_default_web_port ?? null;
-    } catch {
-      /* ignore */
+    } catch (err) {
+      // A corrupt config is now a hard backend error (with a backup file), so
+      // surface it instead of silently running with defaults.
+      useToast().showToast('读取配置失败: ' + err, 'error', 5000);
     }
   }
 
