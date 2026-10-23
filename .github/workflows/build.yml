@@ -64,6 +64,15 @@ jobs:
         run: npm run typecheck
         working-directory: frontend
 
+      - name: Rust format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Rust clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version "^2" --locked
 
