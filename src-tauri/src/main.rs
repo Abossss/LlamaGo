@@ -28,56 +28,19 @@ mod server;
 mod state;
 mod tray;
 
-#[cfg(windows)]
-mod single_instance {
-    use std::os::windows::io::RawHandle;
-    use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, SetLastError,
-    };
-    use windows_sys::Win32::System::Threading::CreateMutexW;
-
-    pub struct Guard(RawHandle);
-
-    impl Guard {
-        /// Acquire a session-scoped named mutex. `Some` on the first instance,
-        /// `None` when another instance already holds the same mutex.
-        pub fn try_acquire(name: &str) -> Option<Guard> {
-            let mut wide: Vec<u16> = name.encode_utf16().collect();
-            wide.push(0);
-            unsafe { SetLastError(0) };
-            let handle = unsafe { CreateMutexW(std::ptr::null(), 0, wide.as_ptr()) };
-            if handle.is_null() {
-                return None;
-            }
-            if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-                unsafe { CloseHandle(handle) };
-                return None;
-            }
-            Some(Guard(handle))
-        }
-    }
-
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            unsafe { CloseHandle(self.0) };
-        }
-    }
-}
-
-use tauri::WindowEvent;
-
-const SINGLE_INSTANCE_MUTEX: &str = "Local\\LlamaGo.SingleInstance";
+use tauri::{Manager, WindowEvent};
 
 fn main() {
-    // If another instance is already running, exit immediately without
-    // creating a window or starting any server process.
-    #[cfg(windows)]
-    let _instance_guard = match single_instance::Guard::try_acquire(SINGLE_INSTANCE_MUTEX) {
-        Some(guard) => guard,
-        None => return,
-    };
-
     tauri::Builder::default()
+        // Must be the first plugin: a second launch then focuses the existing
+        // window instead of starting another launcher/server.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
