@@ -147,8 +147,7 @@ fn write_config_to_path(path: &Path, config: &AppConfig) -> Result<(), String> {
         .ok_or_else(|| "配置文件路径无效".to_string())?;
     std::fs::create_dir_all(dir).map_err(|e| format!("创建配置目录失败: {}", e))?;
     let content = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
-    let mut tmp =
-        NamedTempFile::new_in(dir).map_err(|e| format!("创建临时配置文件失败: {}", e))?;
+    let mut tmp = NamedTempFile::new_in(dir).map_err(|e| format!("创建临时配置文件失败: {}", e))?;
     tmp.write_all(content.as_bytes())
         .and_then(|_| tmp.as_file().sync_all())
         .map_err(|e| format!("写入临时配置文件失败: {}", e))?;

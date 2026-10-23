@@ -108,18 +108,14 @@ fn read_env_store() -> HashMap<String, String> {
 
 #[cfg(not(windows))]
 fn write_env_store(name: &str, value: &str) -> Result<(), String> {
-    let file = env_store_file().ok_or_else(|| {
-        "无法确定用户配置目录（未设置 HOME/XDG_CONFIG_HOME）".to_string()
-    })?;
+    let file = env_store_file()
+        .ok_or_else(|| "无法确定用户配置目录（未设置 HOME/XDG_CONFIG_HOME）".to_string())?;
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let mut map = read_env_store();
     map.insert(name.to_string(), value.to_string());
-    let mut lines: Vec<String> = map
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect();
+    let mut lines: Vec<String> = map.iter().map(|(k, v)| format!("{}={}", k, v)).collect();
     lines.sort();
     std::fs::write(&file, lines.join("\n")).map_err(|e| e.to_string())
 }

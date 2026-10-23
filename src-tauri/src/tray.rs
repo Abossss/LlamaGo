@@ -126,20 +126,36 @@ pub fn update_tray_menu(app: &AppHandle) {
         None => "服务器: 已停止".to_string(),
     };
     if let Err(e) = items.status.set_text(status_title) {
-        write_log(app, "error", &format!("更新托盘菜单 {} 失败: {}", TRAY_STATUS_ID, e));
+        write_log(
+            app,
+            "error",
+            &format!("更新托盘菜单 {} 失败: {}", TRAY_STATUS_ID, e),
+        );
     }
     if let Err(e) = items.toggle.set_text(if running {
         "停止服务器"
     } else {
         "启动服务器"
     }) {
-        write_log(app, "error", &format!("更新托盘菜单 {} 标题失败: {}", TRAY_TOGGLE_ID, e));
+        write_log(
+            app,
+            "error",
+            &format!("更新托盘菜单 {} 标题失败: {}", TRAY_TOGGLE_ID, e),
+        );
     }
     if let Err(e) = items.toggle.set_enabled(true) {
-        write_log(app, "error", &format!("更新托盘菜单 {} 状态失败: {}", TRAY_TOGGLE_ID, e));
+        write_log(
+            app,
+            "error",
+            &format!("更新托盘菜单 {} 状态失败: {}", TRAY_TOGGLE_ID, e),
+        );
     }
     if let Err(e) = items.webui.set_enabled(running) {
-        write_log(app, "error", &format!("更新托盘菜单 {} 状态失败: {}", TRAY_WEBUI_ID, e));
+        write_log(
+            app,
+            "error",
+            &format!("更新托盘菜单 {} 状态失败: {}", TRAY_WEBUI_ID, e),
+        );
     }
 }
 

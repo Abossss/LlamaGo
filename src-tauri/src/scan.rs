@@ -24,7 +24,9 @@ fn get_scan_targets() -> Vec<PathBuf> {
     // Current exe directory
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
-            let canon = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            let canon = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
             if seen.insert(canon) {
                 targets.push(parent.to_path_buf());
             }

@@ -101,9 +101,7 @@ pub struct ScanControl {
 
 impl ScanControl {
     pub fn new() -> Self {
-        Self {
-            cancel_flag: None,
-        }
+        Self { cancel_flag: None }
     }
 }
 

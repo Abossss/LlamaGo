@@ -287,14 +287,10 @@ struct PortCacheEntry {
 /// read, nor on the main thread repeatedly.
 static DEFAULT_PORT_CACHE: OnceLock<Mutex<Option<PortCacheEntry>>> = OnceLock::new();
 
-fn executable_fingerprint(
-    executable: &str,
-) -> (std::path::PathBuf, Option<std::time::SystemTime>) {
-    let path = std::fs::canonicalize(executable)
-        .unwrap_or_else(|_| std::path::PathBuf::from(executable));
-    let modified = std::fs::metadata(&path)
-        .and_then(|m| m.modified())
-        .ok();
+fn executable_fingerprint(executable: &str) -> (std::path::PathBuf, Option<std::time::SystemTime>) {
+    let path =
+        std::fs::canonicalize(executable).unwrap_or_else(|_| std::path::PathBuf::from(executable));
+    let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
     (path, modified)
 }
 
@@ -317,9 +313,8 @@ fn detect_default_web_port(executable: &str) -> Option<u16> {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
     let port = cmd.output().ok().and_then(|output| {
-        parse_default_port_from_help(&String::from_utf8_lossy(&output.stdout)).or_else(|| {
-            parse_default_port_from_help(&String::from_utf8_lossy(&output.stderr))
-        })
+        parse_default_port_from_help(&String::from_utf8_lossy(&output.stdout))
+            .or_else(|| parse_default_port_from_help(&String::from_utf8_lossy(&output.stderr)))
     });
 
     if let Ok(mut guard) = cache.lock() {
@@ -474,7 +469,11 @@ pub fn start_server_inner(
         let reader = std::io::BufReader::new(stderr);
         for line in reader.lines() {
             if let Ok(l) = line {
-                relay_server_log(&ah_stderr, &format!("[stderr] {}", l), stderr_secret.as_deref());
+                relay_server_log(
+                    &ah_stderr,
+                    &format!("[stderr] {}", l),
+                    stderr_secret.as_deref(),
+                );
             }
         }
     });
@@ -540,7 +539,11 @@ fn terminate_child(child: &mut Child, _pid: u32) -> Result<(), String> {
         let _ = Command::new("kill").args(["-TERM", &group]).status();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
-            if child.try_wait().map_err(|e| format!("等待进程退出失败: {}", e))?.is_some() {
+            if child
+                .try_wait()
+                .map_err(|e| format!("等待进程退出失败: {}", e))?
+                .is_some()
+            {
                 return Ok(());
             }
             if std::time::Instant::now() >= deadline {
@@ -548,7 +551,9 @@ fn terminate_child(child: &mut Child, _pid: u32) -> Result<(), String> {
             }
             thread::sleep(Duration::from_millis(100));
         }
-        let _ = Command::new("kill").args(["-KILL", &format!("-{}", _pid)]).status();
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", _pid)])
+            .status();
         let _ = child.kill();
         let _ = child.try_wait();
     }
@@ -561,10 +566,7 @@ fn terminate_child(child: &mut Child, _pid: u32) -> Result<(), String> {
 }
 
 #[tauri::command(async)]
-pub fn stop_server(
-    app_handle: AppHandle,
-    state: State<StateLock>,
-) -> Result<String, String> {
+pub fn stop_server(app_handle: AppHandle, state: State<StateLock>) -> Result<String, String> {
     let result = {
         let mut s = state.lock().map_err(|e| e.to_string())?;
         match s.process.take() {
@@ -628,16 +630,16 @@ pub fn start_server_from_tray(app: &AppHandle) {
             .to_string_lossy()
             .into_owned(),
         None => {
-            crate::tray::emit_toast(
-                app,
-                "未配置 LLAMA_CPP_PATH，请先在软件中设置",
-                "error",
-            );
+            crate::tray::emit_toast(app, "未配置 LLAMA_CPP_PATH，请先在软件中设置", "error");
             return;
         }
     };
     if !Path::new(&exec).exists() {
-        crate::tray::emit_toast(app, "llama-server.exe 不存在，请检查 LLAMA_CPP_PATH", "error");
+        crate::tray::emit_toast(
+            app,
+            "llama-server.exe 不存在，请检查 LLAMA_CPP_PATH",
+            "error",
+        );
         return;
     }
     let model = match resolve_tray_model(app) {
@@ -685,14 +687,17 @@ fn resolve_tray_model(app: &AppHandle) -> Option<String> {
             return Some(m);
         }
     }
-    crate::models::list_models_inner().into_iter().next().map(|m| {
-        crate::tray::emit_toast(
-            app,
-            &format!("未保存上次模型选择，已自动使用: {}", env::basename_of(&m)),
-            "info",
-        );
-        m
-    })
+    crate::models::list_models_inner()
+        .into_iter()
+        .next()
+        .map(|m| {
+            crate::tray::emit_toast(
+                app,
+                &format!("未保存上次模型选择，已自动使用: {}", env::basename_of(&m)),
+                "info",
+            );
+            m
+        })
 }
 
 #[cfg(test)]
@@ -742,11 +747,17 @@ mod tests {
 
     #[test]
     fn parses_port_from_args() {
-        assert_eq!(parse_port_from_args(&v(&["-m", "model.gguf"])), DEFAULT_WEB_PORT);
+        assert_eq!(
+            parse_port_from_args(&v(&["-m", "model.gguf"])),
+            DEFAULT_WEB_PORT
+        );
         assert_eq!(parse_port_from_args(&v(&["--port", "9090"])), 9090);
         assert_eq!(parse_port_from_args(&v(&["-p", "9091"])), 9091);
         assert_eq!(parse_port_from_args(&v(&["--port=9092"])), 9092);
-        assert_eq!(parse_port_from_args(&v(&["--port", "not-a-port"])), DEFAULT_WEB_PORT);
+        assert_eq!(
+            parse_port_from_args(&v(&["--port", "not-a-port"])),
+            DEFAULT_WEB_PORT
+        );
     }
 
     #[test]
