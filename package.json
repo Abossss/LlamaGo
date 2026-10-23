@@ -1,0 +1,10 @@
+{
+  "name": "llamago",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "typecheck": "npm --prefix frontend run typecheck",
+    "tauri": "npm --prefix frontend run tauri --"
+  }
+}
