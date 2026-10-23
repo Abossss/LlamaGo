@@ -11,7 +11,7 @@ src-tauri/gen/schemas/
 
 # Tauri generated (v1 keeps icons under src-tauri/icons; nothing else to ignore here)
 
-# Node / frontend (unused in this project, kept for safety)
+# Node / frontend
 node_modules/
 dist/
 *.local

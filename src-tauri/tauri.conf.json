@@ -4,9 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.llama.launcher",
   "build": {
-    "beforeDevCommand": "",
-    "beforeBuildCommand": "",
-    "frontendDist": "../frontend"
+    "beforeDevCommand": "npm --prefix frontend run dev",
+    "beforeBuildCommand": "npm --prefix frontend run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../frontend/dist"
   },
   "app": {
     "withGlobalTauri": true,

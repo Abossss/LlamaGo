@@ -88,6 +88,24 @@
 - 环形缓冲区保留最近 200 行，窗口唤回时通过 `get_log_history` 补全。
 - 应用日志（`debug.log`）记录内部诊断信息，位于应用数据目录。
 
+### 高级参数 & API 调用
+
+启动页的「**高级参数**」面板（默认在选模型后自动展开）暴露 6 项常用 `llama-server` 参数，启动时作为命令行参数透传：
+
+| 参数 | 对应 CLI flag | 持久化位置 |
+| ---- | ------------ | ---------- |
+| 模型别名（每个 `.gguf` 一个） | `--alias` | `config.json` 的 `model_aliases` |
+| API Key | `--api-key` | `config.json` 的 `advanced.api_key` |
+| 上下文长度 | `-c` | `config.json` 的 `advanced.ctx_size` |
+| GPU 层数 | `-ngl` | `config.json` 的 `advanced.ngl` |
+| 温度 / 最大输出 token | 通过 OpenAI 客户端设置 | `config.json`（仅记录） |
+
+- **模型别名**：每个 `.gguf` 单独存一个短名，WebUI 里 `/v1/models` 显示的即别名（而非文件名）。
+- **API Key**：支持一键随机生成（32 字符 hex）+ 显示 / 复制；未设置时 llama-server 不要求认证。
+- **API 调用面板**：服务运行中显示 Base URL、Model 名、API Key、四个 OpenAI 兼容端点与可一键复制的 `curl` 示例。
+
+> 要求 llama.cpp ≥ b2100（`--alias` / `--api-key` 在该版本引入）。旧版本启动会因未知 flag 报错，UI 会显示 `启动失败` toast 并在日志中打印具体原因。
+
 ### 单实例互斥
 
 使用命名互斥体 `Local\LlamaGo.SingleInstance`，第二个实例自动退出。
@@ -148,18 +166,25 @@ LlamaGo 客户端分为「设置配置页」和「启动运行页」两大功能
 ### 依赖
 
 - Rust（稳定版）
-- Node.js（仅用于 Tauri CLI，前端无 npm 打包）
+- Node.js（npm，用于 Vite 前端构建与 Tauri CLI）
 - 平台 WebView2 / WebKitGTK / WKWebView
 
 ### 构建命令
 
 ```sh
+cd frontend
+npm install            # 安装前端依赖（Vite + Vue 3 + TypeScript）
+
+# 仅前端开发（Vite 开发服务器，端口 5173）
+npm run dev
+
+cd ..
 cd src-tauri
-cargo tauri dev     # 开发模式（前端热重载自 ../frontend）
-cargo tauri build   # 生产构建，安装包输出至 target/release/bundle/
+cargo tauri dev        # 开发模式（自动触发 beforeDevCommand → Vite 热重载）
+cargo tauri build      # 生产构建（先 npm run build 产出 frontend/dist），安装包输出至 target/release/bundle/
 ```
 
-> 前端为单页 HTML，Vue 3 通过 CDN 引入，无需额外打包步骤。
+> 前端为标准 Vite 工程（`frontend/`）：Vue 3 SFC + 组合式 API + TypeScript，按 UI 语义拆分为多个组件（`src/components/*`），共享状态封装在 `src/composables/*`。
 
 ---
 
@@ -169,11 +194,12 @@ cargo tauri build   # 生产构建，安装包输出至 target/release/bundle/
 
 | 命令               | 作用                      | 返回                           |
 | ------------------ | ------------------------- | ------------------------------ |
-| `start_server`     | 启动 `llama-server`       | PID 字符串                     |
+| `start_server`     | 启动 `llama-server`（args / 别名 / API Key） | PID 字符串 |
 | `stop_server`      | 停止服务                  | 终止信息                       |
 | `get_status`       | 查询运行状态              | `(running, pid, port)`         |
-| `check_config`     | 读取上次配置              | exec / model 路径              |
-| `save_config`      | 保存模型选择              | —                              |
+| `get_status_full`  | 查询运行状态（含别名 + API Key） | `{running, pid, port, model_alias, api_key}` |
+| `check_config`     | 读取上次配置（含别名表 + 高级参数） | exec / model 路径 + aliases + advanced |
+| `save_config`      | 保存模型选择 + 别名 + 高级参数 | —                              |
 | `get_env_settings` | 读取环境变量及有效性      | `llama_valid` / `models_valid` |
 | `save_env_var`     | 校验并持久化环境变量      | —                              |
 | `scan_llama_cpp`   | 自动扫描 `llama.cpp` 目录 | 路径列表                       |
@@ -197,7 +223,7 @@ cargo tauri build   # 生产构建，安装包输出至 target/release/bundle/
 ## 已知局限
 
 - **macOS 未经实测**：由于作者没有 Mac，无法对 macOS 平台进行实际测试，理论上支持但可能存在未知问题，敬请见谅。欢迎有 Mac 的朋友反馈问题或提交修复。
-- **参数不可调**：上下文长度、GPU 层数等 `llama-server` 参数暂未开放 UI 配置，后续版本将支持。
+- **API Key 明文存储**：`--api-key` 以明文存入应用数据目录的 `config.json`，本地工具可接受，但请知悉。
 - **`setx` 生效延迟**：环境变量保存后，本进程即时生效，但已打开的其它终端需重启。
 - **Windows 停止非优雅**：直接调用 `TerminateProcess`，不会等待 `llama-server` 落盘。
 - **托盘启动自动选模型**：若未保存过模型，会选用字典序第一个 `.gguf`，可能不符合预期。
@@ -252,6 +278,7 @@ cargo tauri build   # 生产构建，安装包输出至 target/release/bundle/
 ### Build from Source
 
 ```sh
+cd frontend && npm install && cd ..
 cd src-tauri
 cargo tauri dev
 cargo tauri build
