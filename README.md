@@ -21,11 +21,12 @@
 ## 特性一览
 
 - **一键启停**：点击按钮启动/停止 `llama-server`，进程生命周期由应用托管，关闭窗口不影响后台服务。
-- **自动扫描**：自动发现 `llama.cpp` 安装目录与 `.gguf` 模型文件（支持环境变量、目录选择和自动扫描三重机制）。
-- **WebUI 直达**：服务器运行后，一键在默认浏览器打开 `http://127.0.0.1:8080`。
-- **系统托盘常驻**：关闭窗口最小化至托盘，服务持续运行。托盘菜单可直接启停服务、打开 WebUI 或退出。
-- **实时日志面板**：stdout/stderr 逐行滚动显示，保留最近 **200 行**环形缓冲，窗口重新打开自动回填。
-- **单实例保护**：同一时间只允许一个实例，避免端口冲突。
+- **就绪感知**：区分「进程已启动」与「模型加载完成」，就绪前 WebUI 按钮不可用，异常退出会提示退出码。
+- **自动扫描**：自动发现 `llama.cpp` 安装目录与 `.gguf` 模型文件，扫描结果需手动确认后写入环境变量。
+- **WebUI 直达**：服务器就绪后，一键在默认浏览器打开 `http://127.0.0.1:<端口>`；端口取自设置，未设置时读取 `llama-server --help` 的默认值。
+- **系统托盘常驻**：关闭窗口隐藏至托盘（首次会提示），服务持续运行。托盘菜单可直接启停服务、打开 WebUI 或退出。
+- **实时日志面板**：stdout/stderr 逐行滚动显示，支持暂停跟随、导出与清空；前端保留最近 **1500 行**，窗口重新打开自动回填。
+- **单实例保护**：同一时间只允许一个实例，重复启动会聚焦已有窗口。
 
 ---
 
@@ -44,17 +45,17 @@
 
 ### 配置路径
 
-1. 打开「设置」→ 点击「**自动扫描**」自动查找 `llama-server`。
-2. 设置环境变量 `LLAMA_CPP_PATH` 和 `LLAMA_CPP_MODELS_PATH`（点击保存后持久化），或手动选择目录。
+1. 打开「设置」→ 点击「**自动扫描**」查找 `llama-server`，在候选列表中选择要使用的目录。
+2. 设置环境变量 `LLAMA_CPP_PATH` 和 `LLAMA_CPP_MODELS_PATH`（点击保存后持久化），或手动选择目录；保存 `LLAMA_CPP_PATH` 后会自动填入其下（或同级）的 `models` 文件夹（仍需点击保存）。
 3. 切换到「启动」视图，模型下拉列表会自动填充。
 
 ### 启动服务
 
 1. 选择一个 `.gguf` 模型（首次使用需配置路径）。
-2. 点击「**启动服务器**」。
-3. 日志中出现 `server is listening` 即表示就绪，点击「🌐 WebUI」访问。
+2. 点击「**启动服务器**」；启动页会显示即将执行的完整命令预览。
+3. 日志中出现 `server is listening` 后状态变为「运行中」，此时可点击「🌐 WebUI」或调用 API。
 
-> **端口冲突**：默认 8080 被占用时会提示失败，请释放端口或调整服务参数（参数调整功能待后续版本支持）。
+> **端口冲突**：端口优先级为「设置中的 Web 端口 → `llama-server --help` 的默认端口 → 8080」。被占用时启动失败，请修改端口后重启。运行中修改参数，可点击「↻ 重启」立即生效。
 
 ---
 
@@ -69,8 +70,10 @@
 ```
 
 - 启动时 **预检端口**，避免不必要的启动。
-- 运行中每 300ms 轮询进程状态，自动感知退出并更新界面。
+- 运行中每 300ms 轮询进程状态，自动感知退出并更新界面；非主动停止的退出会带上退出码提示。
+- 通过日志中的 `server is listening` 判定「已就绪」，并通过 `server-ready` 事件通知前端。
 - 停止策略：Unix 先 SIGTERM，5 秒后 SIGKILL；Windows 直接终止进程。
+- 应用退出时同样先终止 `llama-server`：托盘「退出」、macOS Cmd+Q / Linux 关闭事件都会走清理路径，Windows 另有 Job Object 兜底。
 
 ### 路径解析优先级
 
@@ -80,35 +83,40 @@
 2. 可执行文件所在目录 + PATH 扫描（兜底）
 3. 引导用户手动设置（若均未找到）
 
-模型扫描递归查找 `.gguf` 文件，深度上限 20 层，自动去重并跳过符号链接环。
+模型扫描递归查找 `.gguf` 文件，深度上限 20 层，自动去重并跳过符号链接环；`mmproj` 视觉投影文件和分片续片（`-00002-of-00004.gguf`）会被过滤，只保留可直接加载的模型。
 
 ### 日志与状态
 
 - 双管道独立线程转发，stderr 行添加 `[stderr]` 前缀。
-- 环形缓冲区保留最近 200 行，窗口唤回时通过 `get_log_history` 补全。
+- 后端环形缓冲区保留最近 200 行用于回填，前端最多展示 1500 行。
+- 日志面板支持「跟随」开关（手动上滚自动暂停）与导出为 `.log` 文件。
 - 应用日志（`debug.log`）记录内部诊断信息，位于应用数据目录。
 
 ### 高级参数 & API 调用
 
-启动页的「**高级参数**」面板（默认在选模型后自动展开）暴露 6 项常用 `llama-server` 参数，启动时作为命令行参数透传：
+「设置 → 高级参数」中的参数为**全局配置**，对所有模型生效，启动时按固定顺序拼接：
 
 | 参数 | 对应 CLI flag | 持久化位置 |
 | ---- | ------------ | ---------- |
+| Web 端口 | `--port` | `config.json` 的 `web_port` |
 | 模型别名（每个 `.gguf` 一个） | `--alias` | `config.json` 的 `model_aliases` |
-| API Key | `--api-key` | `config.json` 的 `advanced.api_key` |
+| API Key | 通过 `LLAMA_API_KEY` 环境变量传入 | `config.json` 的 `advanced.api_key` |
 | 上下文长度 | `-c` | `config.json` 的 `advanced.ctx_size` |
 | GPU 层数 | `-ngl` | `config.json` 的 `advanced.ngl` |
-| 温度 / 最大输出 token | 通过 OpenAI 客户端设置 | `config.json`（仅记录） |
+| 其他启动参数 | 原样追加（支持引号） | `config.json` 的 `advanced.extra_args` |
 
 - **模型别名**：每个 `.gguf` 单独存一个短名，WebUI 里 `/v1/models` 显示的即别名（而非文件名）。
 - **API Key**：支持一键随机生成（32 字符 hex）+ 显示 / 复制；未设置时 llama-server 不要求认证。
-- **API 调用面板**：服务运行中显示 Base URL、Model 名、API Key、四个 OpenAI 兼容端点与可一键复制的 `curl` 示例。
+- **其他启动参数**：可填写 `--mlock`、`--threads 8` 等未在界面中单独暴露的 flag；引号内的空格会保留。
+- **命令预览**：启动页的「启动命令预览」展示实际执行的命令，API Key 不会出现在命令行中。
+- **API 调用面板**：显示 Base URL、模型名称、API Key、OpenAI 兼容端点与可一键复制的 `curl` 示例，并支持「测试连接」。
+- 温度、最大输出 token 等生成参数由 OpenAI 客户端在请求中设置，不属于启动参数。
 
 > 要求 llama.cpp ≥ b2100（`--alias` / `--api-key` 在该版本引入）。旧版本启动会因未知 flag 报错，UI 会显示 `启动失败` toast 并在日志中打印具体原因。
 
 ### 单实例互斥
 
-使用命名互斥体 `Local\LlamaGo.SingleInstance`，第二个实例自动退出。
+使用 `tauri-plugin-single-instance`：再次启动时会聚焦已有窗口，而不是创建第二个实例。
 
 ---
 
@@ -120,10 +128,11 @@ LlamaGo 客户端分为「设置配置页」和「启动运行页」两大功能
 
 **设置配置页**
 
-配置 `llama.cpp` 运行环境，页面备注说明：配置会写入 Windows 用户环境变量，重启软件后生效。
+配置 `llama.cpp` 运行环境，页面备注说明：配置会写入用户环境变量（Windows 用 `setx`，其他平台写入用户配置），保存后立即生效。
 
 - **llama.cpp 目录**：填写 `llama-server` 所在目录（如 `D:\Program Files\llama.cpp\llama`），路径校验显示「√有效」，右侧带「浏览」「保存」按钮，对应环境变量 `LLAMA_CPP_PATH`。
-- **models 目录（模型文件夹）**：填写 `.gguf` 模型存放目录（如 `D:\Program Files\llama.cpp\llama\models`），同样校验「√有效」并带浏览、保存按钮，对应环境变量 `LLAMA_CPP_MODELS_PATH`。
+- **models 目录（模型文件夹）**：填写 `.gguf` 模型存放目录（如 `D:\Program Files\llama.cpp\llama\models`），同样校验「√有效」并带「自动识别」「浏览」「保存」按钮，对应环境变量 `LLAMA_CPP_MODELS_PATH`。「自动识别」优先取 `<llama.cpp 目录>/models`，没有再取上一级的 `models`（常见于 `llama/llama_cpp` + `llama/models` 的目录布局）。
+- 设置页顶部的分区导航可快速跳转到「环境变量 / 高级参数 / API 调用」。
 
 <p align="center"><img src="docs/image/setting.png" width="720"></p>
 
@@ -131,8 +140,10 @@ LlamaGo 客户端分为「设置配置页」和「启动运行页」两大功能
 
 选择 `.gguf` 模型、运行 `llama-server` 服务，并实时查看运行日志。
 
-- **服务器配置**：自动识别出 `llama-server.exe` 完整路径（由设置页配置的环境变量读取）；模型下拉框选择 `models` 目录中的 `.gguf` 模型文件；下方为「启动服务器」按钮及「停止」按钮。
-- **运行日志**：底部黑色日志框，启动服务后实时打印运行日志、加载进度与报错信息（当前显示「等待日志输出...」）。
+- **服务器配置**：自动识别出 `llama-server.exe` 完整路径（由设置页配置的环境变量读取）；模型下拉框选择 `models` 目录中的 `.gguf` 模型文件，支持刷新；下方为「启动服务器」「停止」「重启」「WebUI」按钮。
+- **状态反馈**：启动后按钮显示「模型加载中…」，日志出现 `server is listening` 后变为「运行中」；异常退出会显示退出原因与退出码。
+- **启动命令预览**：展开后可查看本次实际执行的完整命令。
+- **运行日志**：底部黑色日志框，启动服务后实时打印运行日志、加载进度与报错信息，支持跟随、导出和清空。
 
 <p align="center"><img src="docs/image/splash.png" width="720"></p>
 
@@ -153,7 +164,7 @@ LlamaGo 客户端分为「设置配置页」和「启动运行页」两大功能
 
 | 菜单项         | 行为                                       |
 | -------------- | ------------------------------------------ |
-| 状态行（禁用） | 显示「服务器: 运行中 (PID x)」或「已停止」 |
+| 状态行（禁用） | 显示「服务器: 运行中 / 启动中 (PID x)」或「已停止」 |
 | 启动 / 停止    | 一键切换；启动时优先使用上次保存的模型     |
 | 打开 WebUI     | 仅服务运行时可用                           |
 | 显示主窗口     | 唤回主界面                                 |
@@ -192,31 +203,36 @@ cargo tauri build      # 生产构建（先 npm run build 产出 frontend/dist�
 
 ### 后端命令
 
-| 命令               | 作用                      | 返回                           |
-| ------------------ | ------------------------- | ------------------------------ |
-| `start_server`     | 启动 `llama-server`（args / 别名 / API Key） | PID 字符串 |
-| `stop_server`      | 停止服务                  | 终止信息                       |
-| `get_status`       | 查询运行状态              | `(running, pid, port)`         |
-| `get_status_full`  | 查询运行状态（含别名 + API Key） | `{running, pid, port, model_alias, api_key}` |
-| `check_config`     | 读取上次配置（含别名表 + 高级参数） | exec / model 路径 + aliases + advanced |
-| `save_config`      | 保存模型选择 + 别名 + 高级参数 | —                              |
-| `get_env_settings` | 读取环境变量及有效性      | `llama_valid` / `models_valid` |
-| `save_env_var`     | 校验并持久化环境变量      | —                              |
-| `scan_llama_cpp`   | 自动扫描 `llama.cpp` 目录 | 路径列表                       |
-| `cancel_scan`      | 取消扫描                  | —                              |
-| `list_models`      | 递归列出 `.gguf`（排序）  | 路径列表                       |
-| `get_log_history`  | 获取最近 200 行日志       | 日志数组                       |
+| 命令                     | 作用                                                       | 返回                           |
+| ------------------------ | ---------------------------------------------------------- | ------------------------------ |
+| `start_server`           | 启动 `llama-server`（args / 别名 / API Key）               | PID 字符串                     |
+| `stop_server`            | 停止服务                                                   | 终止信息                       |
+| `get_status`             | 查询运行状态                                               | `(running, ready, pid, port)`  |
+| `get_status_full`        | 查询运行状态（含别名 + API Key）                           | `{running, ready, pid, port, model_alias, api_key}` |
+| `check_config`           | 读取上次配置（含别名表 + 高级参数）                        | exec / model 路径 + aliases + advanced |
+| `save_config`            | 保存模型选择 + 别名 + 高级参数 + Web 端口                  | —                              |
+| `get_env_settings`       | 读取环境变量及有效性                                       | `llama_valid` / `exec_path` / `models_valid` |
+| `save_env_var`           | 校验并持久化环境变量                                       | —                              |
+| `suggest_models_path`    | 检测 `<llama.cpp>/models` 或上一级 `models` 是否存在       | 建议路径或 `null`              |
+| `scan_llama_cpp`         | 自动扫描 `llama.cpp` 目录                                  | 候选路径列表                   |
+| `cancel_scan`            | 取消扫描                                                   | —                              |
+| `list_models`            | 递归列出可加载的 `.gguf`（过滤 mmproj / 分片续片，排序）   | 路径列表                       |
+| `get_log_history`        | 获取后端最近 200 行日志                                    | 日志数组                       |
+| `pick_folder`            | 打开原生目录选择器                                         | 路径或 `null`                  |
+| `open_url`               | 用默认浏览器打开链接                                       | —                              |
+| `export_log`             | 通过保存对话框导出日志                                     | 保存路径或 `null`              |
 
 ### 前端事件
 
-| 事件                         | 触发时机           |
-| ---------------------------- | ------------------ |
-| `log-line`                   | 每行 stdout/stderr |
-| `process-exit`               | 进程退出           |
-| `server-started`             | spawn 成功         |
-| `server-status`              | 运行状态变化       |
-| `scan-message` / `scan-done` | 扫描进度 / 完成    |
-| `toast`                      | 全局通知           |
+| 事件                         | 触发时机 / 负载                                   |
+| ---------------------------- | ------------------------------------------------- |
+| `log-line`                   | 每行 stdout/stderr（字符串）                      |
+| `process-exit`               | 非主动停止的进程退出 `{code, success}`            |
+| `server-started`             | spawn 成功（PID）                                 |
+| `server-ready`               | 日志报告 `server is listening`（PID）             |
+| `server-status`              | 运行状态变化 `{running, ready, pid, port}`        |
+| `scan-message` / `scan-done` | 扫描进度 / 完成                                   |
+| `toast`                      | 全局通知                                          |
 
 ---
 
@@ -224,10 +240,12 @@ cargo tauri build      # 生产构建（先 npm run build 产出 frontend/dist�
 
 - **macOS 未经实测**：由于作者没有 Mac，无法对 macOS 平台进行实际测试，理论上支持但可能存在未知问题，敬请见谅。欢迎有 Mac 的朋友反馈问题或提交修复。
 - **API Key 明文存储**：`--api-key` 以明文存入应用数据目录的 `config.json`，本地工具可接受，但请知悉。
-- **`setx` 生效延迟**：环境变量保存后，本进程即时生效，但已打开的其它终端需重启。
+- **`setx` 生效延迟**：环境变量保存后，本进程即时生效，但已打开的其它终端需重启；若 LlamaGo 从旧环境中启动，会回读 `HKCU\Environment` 作为兜底。
 - **Windows 停止非优雅**：直接调用 `TerminateProcess`，不会等待 `llama-server` 落盘。
-- **托盘启动自动选模型**：若未保存过模型，会选用字典序第一个 `.gguf`，可能不符合预期。
+- **托盘启动自动选模型**：若未保存过模型，会选用字典序第一个 `.gguf`，可能不符合预期；托盘启动会复用已保存的别名、API Key 与高级参数。
+- **就绪判定依赖日志**：若使用的 llama.cpp 分支不输出 `server is listening`，界面会一直停留在「加载模型…」，但服务本身仍可通过日志确认。
 - **单实例作用域**：互斥体基于会话（`Local\`），多用户 / 远程桌面各自独立。
+- **配置自动恢复**：`config.json` 解析失败时会被移走为 `config.json.bak.<时间戳>` 并记录到 `debug.log`，之后从默认配置重新开始（原有设置需重新配置）。
 
 ---
 
@@ -237,7 +255,7 @@ cargo tauri build      # 生产构建（先 npm run build 产出 frontend/dist�
 - **特别感谢 [llama.cpp](https://github.com/ggml-org/llama.cpp)**：本项目离不开 llama.cpp 强大的本地推理能力，向其作者与社区致敬。
 - **`llama-server` / WebUI**：属于 [llama.cpp](https://github.com/ggml-org/llama.cpp)（MIT），版权归原项目。
 - **`.gguf` 模型**：版权归各模型作者，用户自行选择并遵守相应许可。
-- **Vue 3 (CDN)**：MIT。
+- **Vue 3 + Vite**：MIT。
 
 如需引用：
 
@@ -263,10 +281,11 @@ cargo tauri build      # 生产构建（先 npm run build 产出 frontend/dist�
 
 **LlamaGo** is a Tauri-based desktop launcher for llama.cpp's `llama-server`. It provides:
 
-- One‑click start/stop with process lifecycle management.
-- Auto‑scan for llama.cpp and `.gguf` models.
-- WebUI launcher (`http://127.0.0.1:8080`).
-- System tray residency with live log panel.
+- One‑click start/stop/restart with process lifecycle management.
+- Ready-state detection (process running vs. model loaded) and exit-code feedback.
+- Auto‑scan for llama.cpp and `.gguf` models, with mmproj/shard filtering.
+- WebUI launcher at the configured port (falls back to the binary's own default).
+- System tray residency with a live log panel (follow / export).
 - Single‑instance protection.
 
 ### Quick Start
