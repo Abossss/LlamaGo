@@ -33,6 +33,9 @@ impl Drop for JobHandle {
 
 pub struct AppState {
     pub is_running: bool,
+    /// True once llama-server logs that it is listening; `/health` and the
+    /// Web UI are not usable before that even though the process exists.
+    pub is_ready: bool,
     pub server_pid: Option<u32>,
     pub web_port: u16,
     pub process: Option<Child>,
@@ -49,6 +52,7 @@ impl AppState {
     pub fn new() -> Self {
         Self {
             is_running: false,
+            is_ready: false,
             server_pid: None,
             web_port: DEFAULT_WEB_PORT,
             process: None,
@@ -60,10 +64,15 @@ impl AppState {
         }
     }
 
-    /// Atomically read the three status fields used by `emit_server_status`
+    /// Atomically read the status fields used by `emit_server_status`
     /// without exposing the whole struct.
-    pub fn status_snapshot(&self) -> (bool, Option<u32>, u16) {
-        (self.is_running, self.server_pid, self.web_port)
+    pub fn status_snapshot(&self) -> (bool, bool, Option<u32>, u16) {
+        (
+            self.is_running,
+            self.is_ready,
+            self.server_pid,
+            self.web_port,
+        )
     }
 
     /// Mark the run as stopped and clear all per-run fields. Called from every
@@ -71,6 +80,7 @@ impl AppState {
     /// tray "quit").
     pub fn clear_run(&mut self) {
         self.is_running = false;
+        self.is_ready = false;
         self.server_pid = None;
         self.web_port = DEFAULT_WEB_PORT;
         self.model_alias.clear();

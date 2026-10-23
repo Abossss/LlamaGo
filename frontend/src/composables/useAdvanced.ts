@@ -12,8 +12,7 @@ export function emptyAdvanced(): AdvancedParams {
   return {
     ctx_size: null,
     ngl: null,
-    temperature: null,
-    max_tokens: null,
+    extra_args: null,
     api_key: null,
   };
 }
@@ -25,10 +24,16 @@ export function generateApiKey(): string {
   return Array.from(buf, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** Persist the current `advanced` + `aliases` (via the shared saveSelection). */
-export function persistAdvanced() {
-  const { saveSelection } = useConfig();
-  saveSelection();
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Persist the current `advanced` + `aliases`, debounced so typing in a
+ * number field does not write config.json on every keystroke. */
+export function persistAdvanced(delay = 400) {
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    useConfig().saveSelection();
+  }, delay);
 }
 
 export function useAdvanced() {

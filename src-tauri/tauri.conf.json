@@ -16,6 +16,8 @@
         "title": "LlamaGo · llama.cpp 启动器",
         "width": 1000,
         "height": 700,
+        "minWidth": 860,
+        "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
         "center": true

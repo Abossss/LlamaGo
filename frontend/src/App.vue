@@ -50,6 +50,18 @@ onMounted(async () => {
     startScan();
   }
   await restoreLastSelection();
+
+  // One-time hint: closing the window hides to the tray rather than quitting.
+  if (hasTauri() && !localStorage.getItem('llamago.trayHintShown')) {
+    localStorage.setItem('llamago.trayHintShown', '1');
+    setTimeout(() => {
+      useToast().showToast(
+        '关闭窗口后 LlamaGo 会隐藏到系统托盘，可从托盘菜单重新打开或退出',
+        'info',
+        7000,
+      );
+    }, 1500);
+  }
 });
 
 onUnmounted(() => {
@@ -59,7 +71,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="toast-container">
+  <div class="toast-container" role="status" aria-live="polite">
     <Toasts :toasts="toasts" />
   </div>
 
@@ -72,7 +84,7 @@ onUnmounted(() => {
     />
 
     <main class="main">
-      <div class="view-wrap">
+      <div class="view-wrap" :class="'view-wrap--' + tab">
         <Transition name="view" mode="out-in">
           <LaunchView v-if="tab === 'launch'" key="launch" />
           <SettingsView v-else key="settings" @goto="tab = $event" />

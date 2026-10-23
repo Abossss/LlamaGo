@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue';
 import { useServer } from '../composables/useServer';
+import { modelPath } from '../composables/useEnvModels';
+import { aliases } from '../composables/useAdvanced';
 
 defineProps<{
   collapsed: boolean;
@@ -11,7 +14,19 @@ const emit = defineEmits<{
   toggleCollapse: [];
 }>();
 
-const { running, pid, webPort } = useServer();
+const { running, starting, ready, pid, webPort, statusLabel, lastExit } =
+  useServer();
+
+const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
+const modelName = computed(() => {
+  if (!modelPath.value) return '';
+  return aliases.value[modelPath.value]?.trim() || baseName(modelPath.value);
+});
+
+const dotClass = computed(() => {
+  if (starting.value || (running.value && !ready.value)) return 'dot-loading';
+  return running.value ? 'dot-running' : 'dot-stopped';
+});
 </script>
 
 <template>
@@ -72,12 +87,19 @@ const { running, pid, webPort } = useServer();
     </nav>
 
     <div class="sidebar-footer">
+      <div class="sidebar-model" v-if="modelName" :title="modelPath">
+        <span class="sidebar-model-label">当前模型</span>
+        <span class="sidebar-model-name">{{ modelName }}</span>
+      </div>
       <div class="server-status">
-        <span class="dot" :class="running ? 'dot-running' : 'dot-stopped'" />
+        <span class="dot" :class="dotClass" />
         <div class="server-copy">
-          <span class="status-label">{{ running ? '运行中' : '已停止' }}</span>
+          <span class="status-label">{{ statusLabel }}</span>
           <span class="status-meta" v-if="running && pid">PID {{ pid }} · :{{ webPort }}</span>
-          <span class="status-meta" v-else>服务器未启动</span>
+          <span class="status-meta" v-else-if="lastExit">
+            意外退出{{ lastExit.code != null ? `（退出码 ${lastExit.code}）` : '' }}
+          </span>
+          <span class="status-meta" v-else>{{ starting ? '正在拉起进程…' : '服务器未启动' }}</span>
         </div>
       </div>
       <button

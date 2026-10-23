@@ -46,13 +46,17 @@ pub fn save_config(
             cfg.model_path = Some(v);
         }
         if let Some(m) = model_aliases {
-            // Merge: user-supplied entries win, but keep existing aliases for
-            // other models so switching model selections doesn't lose them.
-            for (k, v) in m {
-                if !v.trim().is_empty() {
-                    cfg.model_aliases.insert(k, v);
-                }
-            }
+            // Replace, not merge: the UI always sends the complete map, so a
+            // merge would make cleared aliases impossible to delete. Empty
+            // values are dropped so "reset to filename" really clears them.
+            let cleaned: HashMap<String, String> = m
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    let v = v.trim();
+                    (!v.is_empty()).then(|| (k, v.to_string()))
+                })
+                .collect();
+            cfg.model_aliases = cleaned;
         }
         if let Some(a) = advanced {
             cfg.advanced = Some(a);

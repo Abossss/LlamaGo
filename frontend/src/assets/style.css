@@ -52,7 +52,7 @@ body {
   font-size: 15px;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
-  overflow-y: scroll;
+  overflow-y: auto;
 }
 
 body::before {
@@ -241,6 +241,31 @@ body::before {
   border-top: 1px solid var(--sidebar-border);
 }
 
+.sidebar-model {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 8px 10px;
+  margin-bottom: 6px;
+  border-bottom: 1px dashed var(--sidebar-border);
+}
+
+.sidebar-model-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6f6e69;
+}
+
+.sidebar-model-name {
+  font-size: 12.5px;
+  color: #e6e4dd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .collapse-btn {
   display: flex;
   align-items: center;
@@ -312,6 +337,22 @@ body::before {
   background: #6f6e69;
 }
 
+.dot-loading {
+  background: var(--warn);
+  box-shadow: 0 0 0 4px rgba(201, 168, 66, 0.22);
+  animation: dot-pulse-warn 1.4s ease-in-out infinite;
+}
+
+@keyframes dot-pulse-warn {
+  0%,
+  100% {
+    box-shadow: 0 0 0 4px rgba(201, 168, 66, 0.22);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(201, 168, 66, 0.05);
+  }
+}
+
 @keyframes dot-pulse {
   0%,
   100% {
@@ -332,6 +373,31 @@ body::before {
   max-width: 720px;
   margin: 0 auto;
   padding: 44px 44px 72px;
+}
+
+/* ---- Launch view: fill the window, log panel takes the remaining height ---- */
+.view-wrap--launch {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 32px 44px 24px;
+  overflow-y: auto;
+}
+
+.view-wrap--launch .view {
+  flex: 1;
+  min-height: 0;
+}
+
+.view-wrap--launch .log-panel {
+  flex: 1;
+  min-height: 220px;
+}
+
+.view-wrap--launch .terminal-output {
+  flex: 1;
+  max-height: none;
+  min-height: 120px;
 }
 
 .view {
@@ -541,6 +607,19 @@ select.input-field {
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.btn:focus-visible,
+.nav-item:focus-visible,
+.collapse-btn:focus-visible,
+.advanced-toggle:focus-visible,
+.toast-close:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.input-field:focus-visible {
+  outline: none;
 }
 
 .btn:active:not(:disabled) {
@@ -874,10 +953,10 @@ select.input-field {
 }
 
 /* ---- Settings view: wider + more compact ---- */
-/* The view renders inside .view-wrap (max-width 720px). We let the settings
-   view break out wider and pack its content tighter. */
-.view-wrap:has(.settings-view) {
-  max-width: 1120px;
+/* Settings gets its own wrapper class (set in App.vue) instead of relying on
+   `:has()`, so the layout also works on older WebView2 builds. */
+.view-wrap--settings {
+  max-width: 1220px;
   padding: 28px 44px 48px;
 }
 
@@ -899,8 +978,9 @@ select.input-field {
   margin-bottom: 8px;
 }
 
-/* Two input rows side-by-side on wide screens */
-@media (min-width: 980px) {
+/* Two input rows side-by-side only when the window is actually wide enough
+   for both paths to stay readable. */
+@media (min-width: 1180px) {
   .settings-view .env-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -965,6 +1045,22 @@ select.input-field {
   .view-wrap {
     padding: 32px 28px 56px;
   }
+
+  /* Stacked sidebar + fixed 100vh would overflow; let the page scroll. */
+  .view-wrap--launch {
+    height: auto;
+    padding: 28px 28px 40px;
+  }
+
+  .view-wrap--launch .view,
+  .view-wrap--launch .log-panel {
+    flex: none;
+  }
+
+  .view-wrap--launch .terminal-output {
+    max-height: 320px;
+    min-height: 0;
+  }
 }
 
 /* Collapsed sidebar (only when sidebar is a column rail) */
@@ -985,6 +1081,7 @@ select.input-field {
   .sidebar.collapsed .nav-kbd,
   .sidebar.collapsed .status-label,
   .sidebar.collapsed .status-meta,
+  .sidebar.collapsed .sidebar-model,
   .sidebar.collapsed .collapse-btn span {
     display: none;
   }

@@ -1,4 +1,4 @@
-// Wrapper around @tauri-apps/api for the 13 backend commands.
+// Wrapper around @tauri-apps/api for the backend commands.
 // The only place in the app that talks to the Rust backend.
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -6,10 +6,11 @@ import type {
   AdvancedParams,
   ConfigInfo,
   EnvSettings,
+  ProcessExitEvent,
   ScanDoneEvent,
   ServerStatusEvent,
   StatusFull,
-  StatusTriple,
+  StatusSnapshot,
   ToastPayload,
 } from '../types';
 
@@ -18,10 +19,11 @@ export type {
   AdvancedParams,
   ConfigInfo,
   EnvSettings,
+  ProcessExitEvent,
   ScanDoneEvent,
   ServerStatusEvent,
   StatusFull,
-  StatusTriple,
+  StatusSnapshot,
   ToastPayload,
 };
 
@@ -40,7 +42,7 @@ export const cmd = {
       apiKey: api_key,
     }),
   stop_server: () => invoke<string>('stop_server'),
-  get_status: () => invoke<StatusTriple>('get_status'),
+  get_status: () => invoke<StatusSnapshot>('get_status'),
   get_status_full: () => invoke<StatusFull>('get_status_full'),
   check_config: () => invoke<ConfigInfo>('check_config'),
   save_config: (
@@ -58,16 +60,21 @@ export const cmd = {
   get_env_settings: () => invoke<EnvSettings>('get_env_settings'),
   save_env_var: (name: string, value: string) =>
     invoke<void>('save_env_var', { name, value }),
+  suggest_models_path: (llama_dir: string) =>
+    invoke<string | null>('suggest_models_path', { llamaDir: llama_dir }),
   scan_llama_cpp: () => invoke<string[]>('scan_llama_cpp'),
   cancel_scan: () => invoke<void>('cancel_scan'),
   list_models: () => invoke<string[]>('list_models'),
   get_log_history: () => invoke<string[]>('get_log_history'),
   pick_folder: () => invoke<string | null>('pick_folder'),
   open_url: (url: string) => invoke<void>('open_url', { url }),
+  export_log: (content: string, default_name: string) =>
+    invoke<string | null>('export_log', { content, defaultName: default_name }),
 };
 
 /** Convenience alias for the event payload types used by subscribe helpers. */
 export type {
+  ProcessExitEvent as ProcessExit,
   ScanDoneEvent as ScanDone,
   ServerStatusEvent as ServerStatus,
   ToastPayload as ToastEvent,

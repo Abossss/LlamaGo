@@ -42,8 +42,40 @@ pub fn get_env_var_value(name: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
-fn env_store_value(_name: &str) -> Option<String> {
-    None
+fn env_store_value(name: &str) -> Option<String> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    // Fallback for a launcher started from a shell whose environment predates
+    // the last `setx` (and for values written by a previous app version).
+    let env = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .ok()?;
+    let value = env.get_value::<String, _>(name).ok()?;
+    // winreg returns REG_EXPAND_SZ verbatim; expand `%VAR%` references so the
+    // path can be validated/found like one inherited from the environment.
+    let expanded = expand_env_vars(&value);
+    (!expanded.trim().is_empty()).then_some(expanded)
+}
+
+#[cfg(windows)]
+fn expand_env_vars(value: &str) -> String {
+    use windows_sys::Win32::System::Environment::ExpandEnvironmentStringsW;
+
+    let src: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+    // First call with a null buffer returns the required length, including
+    // the terminating NUL.
+    let needed = unsafe { ExpandEnvironmentStringsW(src.as_ptr(), std::ptr::null_mut(), 0) };
+    if needed == 0 {
+        return value.to_string();
+    }
+    let mut buf = vec![0u16; needed as usize];
+    let written = unsafe { ExpandEnvironmentStringsW(src.as_ptr(), buf.as_mut_ptr(), needed) };
+    if written == 0 || written > needed {
+        return value.to_string();
+    }
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(written as usize);
+    String::from_utf16_lossy(&buf[..len])
 }
 
 #[cfg(not(windows))]

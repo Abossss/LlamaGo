@@ -38,7 +38,7 @@ fn push_log_history(app: &AppHandle, line: &str) {
 /// Emit a server log line and watch for bind failures (the port pre-check in
 /// `start_server_inner` is best-effort and racy, so we also react to the
 /// actual llama-server error output here).
-fn relay_server_log(app: &AppHandle, line: &str, secret: Option<&str>) {
+fn relay_server_log(app: &AppHandle, line: &str, secret: Option<&str>, pid: u32) {
     let line = redact_log_line(line, secret);
     let _ = app.emit("log-line", &line);
     push_log_history(app, &line);
@@ -53,6 +53,36 @@ fn relay_server_log(app: &AppHandle, line: &str, secret: Option<&str>) {
             "端口可能被占用，llama-server 未能启动，请更换 Web 端口",
             "error",
         );
+    }
+    if is_ready_line(&lower) {
+        mark_ready(app, pid);
+    }
+}
+
+/// llama.cpp prints one of these once the HTTP listener is up:
+/// `main: server is listening on http://127.0.0.1:9931 - starting the main loop`.
+fn is_ready_line(lower: &str) -> bool {
+    lower.contains("server is listening") || lower.contains("listening on http")
+}
+
+/// Promote the run to "ready" exactly once. The PID check keeps a late line
+/// from a previous process from marking a newer run ready.
+fn mark_ready(app: &AppHandle, pid: u32) {
+    let became_ready = {
+        let state = app.state::<StateLock>();
+        let ready = match state.lock() {
+            Ok(mut s) if s.is_running && !s.is_ready && s.server_pid == Some(pid) => {
+                s.is_ready = true;
+                true
+            }
+            _ => false,
+        };
+        ready
+    };
+    if became_ready {
+        let _ = app.emit("server-ready", pid);
+        crate::tray::emit_server_status(app);
+        crate::tray::update_tray_menu(app);
     }
 }
 
@@ -439,6 +469,7 @@ pub fn start_server_inner(
     // start (port busy / spawn error) never leaves a stale web_port behind.
     s.web_port = port;
     s.is_running = true;
+    s.is_ready = false;
     s.server_pid = Some(pid);
     s.process = Some(child);
     #[cfg(windows)]
@@ -457,7 +488,7 @@ pub fn start_server_inner(
     thread::spawn(move || {
         let reader = std::io::BufReader::new(stdout);
         for l in reader.lines().map_while(Result::ok) {
-            relay_server_log(&ah_stdout, &l, stdout_secret.as_deref());
+            relay_server_log(&ah_stdout, &l, stdout_secret.as_deref(), pid);
         }
     });
 
@@ -470,9 +501,16 @@ pub fn start_server_inner(
                 &ah_stderr,
                 &format!("[stderr] {}", l),
                 stderr_secret.as_deref(),
+                pid,
             );
         }
     });
+
+    enum ExitState {
+        Exited(Option<i32>, bool),
+        Running,
+        Stale,
+    }
 
     let ah_wait = app_handle.clone();
     thread::spawn(move || {
@@ -484,20 +522,19 @@ pub fn start_server_inner(
                     Err(_) => return,
                 };
                 match lock.process.as_mut() {
-                    Some(child) => {
-                        if child.id() != pid {
-                            None
-                        } else if child.try_wait().ok().flatten().is_some() {
-                            Some(true)
-                        } else {
-                            Some(false)
-                        }
-                    }
-                    None => None,
+                    Some(child) if child.id() == pid => match child.try_wait() {
+                        Ok(Some(status)) => ExitState::Exited(status.code(), status.success()),
+                        Ok(None) => ExitState::Running,
+                        Err(_) => ExitState::Exited(None, false),
+                    },
+                    _ => ExitState::Stale,
                 }
             };
             match decision {
-                Some(true) => {
+                ExitState::Exited(code, success) => {
+                    // A graceful stop removes the child from state first, so
+                    // this point is only reached when the process exited on
+                    // its own (crash, port conflict, model load failure...).
                     let should_report = {
                         let mut lock = match state.lock() {
                             Ok(lock) => lock,
@@ -512,13 +549,16 @@ pub fn start_server_inner(
                     };
                     if should_report {
                         crate::tray::emit_server_status(&ah_wait);
-                        let _ = ah_wait.emit("process-exit", ());
+                        let _ = ah_wait.emit(
+                            "process-exit",
+                            serde_json::json!({ "code": code, "success": success }),
+                        );
                         crate::tray::update_tray_menu(&ah_wait);
                     }
                     return;
                 }
-                Some(false) => thread::sleep(Duration::from_millis(300)),
-                None => return,
+                ExitState::Running => thread::sleep(Duration::from_millis(300)),
+                ExitState::Stale => return,
             }
         }
     });
@@ -583,7 +623,7 @@ pub fn stop_server(app_handle: AppHandle, state: State<StateLock>) -> Result<Str
 }
 
 #[tauri::command]
-pub fn get_status(state: State<StateLock>) -> Result<(bool, Option<u32>, u16), String> {
+pub fn get_status(state: State<StateLock>) -> Result<(bool, bool, Option<u32>, u16), String> {
     let s = state.lock().map_err(|e| e.to_string())?;
     Ok(s.status_snapshot())
 }
@@ -594,6 +634,7 @@ pub fn get_status_full(state: State<StateLock>) -> Result<serde_json::Value, Str
     let s = state.lock().map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
         "running": s.is_running,
+        "ready": s.is_ready,
         "pid": s.server_pid,
         "port": s.web_port,
         "model_alias": s.model_alias,
@@ -616,9 +657,42 @@ pub fn stop_server_now(app: &AppHandle) {
     crate::tray::emit_server_status(app);
 }
 
+/// Split a free-form extra-args string the same way the frontend does, so
+/// tray-initiated launches use identical arguments. Handles quoted paths.
+fn tokenize_extra_args(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut started = false;
+    for ch in input.chars() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '"' || ch == '\'' => {
+                quote = Some(ch);
+                started = true;
+            }
+            None if ch.is_whitespace() => {
+                if started {
+                    out.push(std::mem::take(&mut current));
+                    started = false;
+                }
+            }
+            None => {
+                current.push(ch);
+                started = true;
+            }
+        }
+    }
+    if started {
+        out.push(current);
+    }
+    out
+}
+
 /// Kick off the server from the tray menu: resolve the last-used model
 /// (falling back to the first `.gguf` found, with a toast) and reuse the
-/// shared spawn path.
+/// shared spawn path with the saved advanced parameters.
 pub fn start_server_from_tray(app: &AppHandle) {
     let exec = match env::get_env_var_value(env::ENV_LLAMA_CPP) {
         Some(p) => Path::new(&p)
@@ -638,7 +712,14 @@ pub fn start_server_from_tray(app: &AppHandle) {
         );
         return;
     }
-    let model = match resolve_tray_model(app) {
+    let cfg = match config::read_config(app) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            crate::tray::emit_toast(app, &format!("读取配置失败: {}", e), "error");
+            return;
+        }
+    };
+    let model = match resolve_tray_model(app, &cfg) {
         Some(m) => m,
         None => {
             crate::tray::emit_toast(
@@ -649,19 +730,48 @@ pub fn start_server_from_tray(app: &AppHandle) {
             return;
         }
     };
+
+    let advanced = cfg.advanced.clone().unwrap_or_default();
+    let alias = cfg
+        .model_aliases
+        .get(&model)
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty());
+
     let mut args: Vec<String> = vec!["-m".into(), model];
+    if let Some(alias) = alias.as_deref() {
+        args.push("--alias".into());
+        args.push(alias.to_string());
+    }
+    if let Some(ctx) = advanced.ctx_size {
+        args.push("-c".into());
+        args.push(ctx.to_string());
+    }
+    if let Some(ngl) = advanced.ngl {
+        args.push("-ngl".into());
+        args.push(ngl.to_string());
+    }
+    if let Some(extra) = advanced.extra_args.as_deref() {
+        args.extend(tokenize_extra_args(extra));
+    }
     // Honor the saved Web UI port, same as the command-driven start path.
-    let configured_port = match config::read_config(app) {
-        Ok(cfg) => cfg.web_port,
-        Err(e) => {
-            crate::tray::emit_toast(app, &format!("读取配置失败: {}", e), "error");
-            return;
-        }
-    };
-    let port = resolve_web_port_for_launch(&args, configured_port, &exec);
+    let port = resolve_web_port_for_launch(&args, cfg.web_port, &exec);
     args = with_configured_web_port(&args, port);
+
+    let api_key = advanced
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty());
     let state = app.state::<StateLock>();
-    match start_server_inner(app, state.inner(), &exec, args, "", None) {
+    match start_server_inner(
+        app,
+        state.inner(),
+        &exec,
+        args,
+        alias.as_deref().unwrap_or(""),
+        api_key,
+    ) {
         Ok(pid) => crate::tray::emit_toast(app, &format!("服务器已启动 (PID: {})", pid), "success"),
         Err(e) => crate::tray::emit_toast(app, &format!("启动失败: {}", e), "error"),
     }
@@ -670,17 +780,10 @@ pub fn start_server_from_tray(app: &AppHandle) {
 /// Pick which model the tray "start" flow should use: the last saved
 /// selection if it still exists, otherwise the first available model (with a
 /// toast explaining the fallback).
-fn resolve_tray_model(app: &AppHandle) -> Option<String> {
-    let saved = match config::read_config(app) {
-        Ok(cfg) => cfg.model_path,
-        Err(e) => {
-            crate::tray::emit_toast(app, &format!("读取配置失败: {}", e), "error");
-            return None;
-        }
-    };
-    if let Some(m) = saved {
-        if Path::new(&m).exists() {
-            return Some(m);
+fn resolve_tray_model(app: &AppHandle, cfg: &config::AppConfig) -> Option<String> {
+    if let Some(m) = cfg.model_path.as_ref() {
+        if Path::new(m).exists() {
+            return Some(m.clone());
         }
     }
     crate::models::list_models_inner()
@@ -834,6 +937,30 @@ mod tests {
             }
             thread::sleep(Duration::from_millis(50));
         }
+    }
+
+    #[test]
+    fn tokenizes_extra_args_with_quotes() {
+        assert_eq!(
+            tokenize_extra_args("--mlock --threads 8"),
+            v(&["--mlock", "--threads", "8"])
+        );
+        assert_eq!(
+            tokenize_extra_args(r#"--lora "C:\my models\a.bin"  --verbose"#),
+            v(&["--lora", r"C:\my models\a.bin", "--verbose"])
+        );
+        assert_eq!(tokenize_extra_args("'a b' c"), v(&["a b", "c"]));
+        assert!(tokenize_extra_args("   ").is_empty());
+    }
+
+    #[test]
+    fn detects_ready_log_lines() {
+        assert!(is_ready_line(
+            "main: server is listening on http://127.0.0.1:9931 - starting the main loop"
+        ));
+        assert!(is_ready_line("srv  listening on http://0.0.0.0:8080"));
+        assert!(!is_ready_line("loading model from disk"));
+        assert!(!is_ready_line("slot released"));
     }
 
     #[test]

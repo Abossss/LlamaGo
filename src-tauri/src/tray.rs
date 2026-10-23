@@ -32,11 +32,11 @@ pub fn emit_toast(app: &AppHandle, message: &str, kind: &str) {
 }
 
 pub fn emit_server_status(app: &AppHandle) {
-    let (running, pid, port) = {
+    let (running, ready, pid, port) = {
         let state = app.state::<AppStateLock>();
         let locked = state.lock();
         match locked {
-            Ok(lock) => (lock.is_running, lock.server_pid, lock.web_port),
+            Ok(lock) => lock.status_snapshot(),
             Err(_) => return,
         }
     };
@@ -44,6 +44,7 @@ pub fn emit_server_status(app: &AppHandle) {
         "server-status",
         serde_json::json!({
             "running": running,
+            "ready": ready,
             "pid": pid,
             "port": port,
         }),
@@ -109,11 +110,11 @@ pub fn toggle_server_from_tray(app: &AppHandle) {
 /// sync with the real process state.
 pub fn update_tray_menu(app: &AppHandle) {
     let items = app.state::<TrayItems>();
-    let (running, pid) = {
+    let (running, ready, pid) = {
         let state = app.state::<AppStateLock>();
         let locked = state.lock();
         match locked {
-            Ok(lock) => (lock.is_running, lock.server_pid),
+            Ok(lock) => (lock.is_running, lock.is_ready, lock.server_pid),
             Err(_) => {
                 write_log(app, "error", "状态锁已损坏，无法刷新托盘菜单");
                 return;
@@ -121,9 +122,10 @@ pub fn update_tray_menu(app: &AppHandle) {
         }
     };
 
-    let status_title = match pid {
-        Some(p) => format!("服务器: 运行中 (PID {})", p),
-        None => "服务器: 已停止".to_string(),
+    let status_title = match (running, pid) {
+        (true, Some(p)) if ready => format!("服务器: 运行中 (PID {})", p),
+        (true, Some(p)) => format!("服务器: 启动中 (PID {})", p),
+        _ => "服务器: 已停止".to_string(),
     };
     if let Err(e) = items.status.set_text(status_title) {
         write_log(

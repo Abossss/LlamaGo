@@ -39,15 +39,15 @@ pub fn validate_web_port(port: Option<i64>) -> Result<Option<u16>, String> {
     }
 }
 
-/// Advanced per-model parameters surfaced in the UI. `temperature` and
-/// `max_tokens` are recorded but NOT passed to llama-server (OpenAI clients
-/// set these per-request); `ctx_size`/`ngl`/`api_key` are forwarded as CLI args.
+/// Advanced launch parameters surfaced in the UI. They are shared across all
+/// models (a single global config, not per-model): `ctx_size`/`ngl` are
+/// forwarded as CLI args, `extra_args` is appended verbatim (tokenized by the
+/// frontend), and `api_key` is exported as `LLAMA_API_KEY`.
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone, Debug)]
 pub struct AdvancedParams {
     pub ctx_size: Option<u32>,
     pub ngl: Option<i32>,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u32>,
+    pub extra_args: Option<String>,
     pub api_key: Option<String>,
 }
 
@@ -86,7 +86,7 @@ pub fn read_config(app_handle: &AppHandle) -> Result<AppConfig, String> {
 }
 
 /// Read a config file. A missing file means "first run" and yields defaults;
-/// a corrupt file is backed up to `config.json.bak.<timestamp>`, recorded in
+/// a corrupt file is moved to `config.json.bak.<timestamp>`, recorded in
 /// `debug.log`, and reported as an error instead of being silently ignored.
 fn read_config_from_path(path: &Path) -> Result<AppConfig, String> {
     let content = match std::fs::read_to_string(path) {
@@ -97,7 +97,7 @@ fn read_config_from_path(path: &Path) -> Result<AppConfig, String> {
         Err(e) => return Err(format!("读取配置文件失败: {}", e)),
     };
     serde_json::from_str(&content).map_err(|err| {
-        let detail = match backup_corrupt_config(path, &content) {
+        let detail = match backup_corrupt_config(path) {
             Ok(backup) => format!("原文件已备份到 {}", backup.display()),
             Err(e) => format!("备份失败: {}", e),
         };
@@ -107,7 +107,7 @@ fn read_config_from_path(path: &Path) -> Result<AppConfig, String> {
     })
 }
 
-fn backup_corrupt_config(path: &Path, content: &str) -> Result<PathBuf, String> {
+fn backup_corrupt_config(path: &Path) -> Result<PathBuf, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
@@ -121,7 +121,9 @@ fn backup_corrupt_config(path: &Path, content: &str) -> Result<PathBuf, String> 
         stamp.as_secs(),
         stamp.subsec_millis()
     ));
-    std::fs::write(&backup, content).map_err(|e| e.to_string())?;
+    // Move rather than copy: leaving the corrupt file in place would make
+    // every later save fail on the same parse error.
+    std::fs::rename(path, &backup).map_err(|e| e.to_string())?;
     Ok(backup)
 }
 
@@ -299,6 +301,9 @@ mod tests {
             .collect();
         assert_eq!(backups.len(), 1);
         assert_eq!(std::fs::read_to_string(&backups[0]).unwrap(), "{not json");
+        // The corrupt file is moved aside, so later saves start from defaults.
+        assert!(!path.exists());
+        assert!(read_config_from_path(&path).unwrap().model_path.is_none());
 
         let debug = std::fs::read_to_string(dir.path().join("debug.log")).unwrap();
         assert!(debug.contains("解析失败"), "debug.log: {debug}");

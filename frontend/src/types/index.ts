@@ -12,12 +12,14 @@ export interface ToastPayload {
 export interface EnvSettings {
   llama_cpp_path: string | null;
   llama_valid: boolean;
+  /** Platform-resolved llama-server path; `null` when not valid. */
+  exec_path: string | null;
   models_path: string | null;
   models_valid: boolean;
 }
 
-/** `get_status` return value: [running, pid, port]. */
-export type StatusTriple = [boolean, number | null, number];
+/** `get_status` return value: [running, ready, pid, port]. */
+export type StatusSnapshot = [boolean, boolean, number | null, number];
 
 /**
  * `get_status_full` return value — richer status used by the API panel,
@@ -25,18 +27,19 @@ export type StatusTriple = [boolean, number | null, number];
  */
 export interface StatusFull {
   running: boolean;
+  ready: boolean;
   pid: number | null;
   port: number;
   model_alias: string;
   api_key: string | null;
 }
 
-/** Advanced per-model parameters surfaced in the UI. */
+/** Advanced launch parameters, shared across all models. */
 export interface AdvancedParams {
   ctx_size: number | null;
   ngl: number | null;
-  temperature: number | null;
-  max_tokens: number | null;
+  /** Free-form extra CLI args, tokenized with quote support. */
+  extra_args: string | null;
   api_key: string | null;
 }
 
@@ -57,8 +60,15 @@ export interface ConfigInfo {
 /** `server-status` event payload. */
 export interface ServerStatusEvent {
   running: boolean;
+  ready: boolean;
   pid: number | null;
   port: number;
+}
+
+/** `process-exit` event payload: the process exited on its own. */
+export interface ProcessExitEvent {
+  code: number | null;
+  success: boolean;
 }
 
 /** `scan-done` event payload. */

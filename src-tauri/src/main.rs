@@ -61,6 +61,7 @@ fn main() {
             cmd_env::get_env_settings,
             cmd_env::save_env_var,
             cmd_env::pick_folder,
+            cmd_env::suggest_models_path,
             scan::scan_llama_cpp,
             scan::cancel_scan,
             models::list_models,
@@ -70,7 +71,16 @@ fn main() {
             server::get_status,
             server::get_status_full,
             misc::open_url,
+            misc::export_log,
         ])
-        .run(tauri::generate_context!())
-        .expect("启动 LlamaGo 时出错");
+        .build(tauri::generate_context!())
+        .expect("启动 LlamaGo 时出错")
+        .run(|app_handle, event| {
+            // Quitting from macOS (Cmd+Q) or Linux exits the event loop without
+            // the tray "quit" path; stop llama-server so it never outlives the
+            // launcher. On Windows the Job Object is the final backstop.
+            if let tauri::RunEvent::Exit = event {
+                server::stop_server_now(app_handle);
+            }
+        });
 }
