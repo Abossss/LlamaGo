@@ -60,6 +60,9 @@ pub fn list_models_inner() -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn list_models() -> Result<Vec<String>, String> {
-    Ok(list_models_inner())
+pub async fn list_models() -> Result<Vec<String>, String> {
+    // Recursive directory walk can take seconds on large model folders.
+    tokio::task::spawn_blocking(list_models_inner)
+        .await
+        .map_err(|e| format!("读取模型列表失败: {}", e))
 }

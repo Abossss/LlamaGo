@@ -22,8 +22,11 @@ pub fn get_env_settings() -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-pub fn save_env_var(name: String, value: String) -> Result<(), String> {
-    env::save_env_var(&name, &value)
+pub async fn save_env_var(name: String, value: String) -> Result<(), String> {
+    // `setx` on Windows can take ~100 ms–1 s; keep it off the runtime thread.
+    tokio::task::spawn_blocking(move || env::save_env_var(&name, &value))
+        .await
+        .map_err(|e| format!("保存环境变量失败: {}", e))?
 }
 
 /// Native folder picker; returns `Ok(None)` when the user cancels.

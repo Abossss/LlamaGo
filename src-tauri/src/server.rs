@@ -5,7 +5,7 @@ use std::io::BufRead;
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -170,7 +170,7 @@ fn resolve_executable() -> Result<String, String> {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_server(
     app_handle: AppHandle,
     state: State<StateLock>,
@@ -274,16 +274,60 @@ fn parse_default_port_from_help(help: &str) -> Option<u16> {
     })
 }
 
-/// Ask the configured llama-server binary for its default port. Help output
-/// is cheap (~60 ms) and avoids assuming upstream's 8080 on custom builds.
+struct PortCacheEntry {
+    executable: std::path::PathBuf,
+    modified: Option<std::time::SystemTime>,
+    port: Option<u16>,
+}
+
+/// Last `--help` probe, keyed by the canonical executable path + mtime. The
+/// probe takes tens of milliseconds and must not run on every status/config
+/// read, nor on the main thread repeatedly.
+static DEFAULT_PORT_CACHE: OnceLock<Mutex<Option<PortCacheEntry>>> = OnceLock::new();
+
+fn executable_fingerprint(
+    executable: &str,
+) -> (std::path::PathBuf, Option<std::time::SystemTime>) {
+    let path = std::fs::canonicalize(executable)
+        .unwrap_or_else(|_| std::path::PathBuf::from(executable));
+    let modified = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok();
+    (path, modified)
+}
+
+/// Ask the configured llama-server binary for its default port. The result is
+/// cached until the binary path or its mtime changes, so a reinstall/upgrade
+/// is still detected.
 fn detect_default_web_port(executable: &str) -> Option<u16> {
-    let mut cmd = Command::new(executable);
+    let (path, modified) = executable_fingerprint(executable);
+    let cache = DEFAULT_PORT_CACHE.get_or_init(|| Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some(entry) = guard.as_ref() {
+            if entry.executable == path && entry.modified == modified {
+                return entry.port;
+            }
+        }
+    }
+
+    let mut cmd = Command::new(&path);
     cmd.arg("--help").stdin(Stdio::null());
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
-    let output = cmd.output().ok()?;
-    parse_default_port_from_help(&String::from_utf8_lossy(&output.stdout))
-        .or_else(|| parse_default_port_from_help(&String::from_utf8_lossy(&output.stderr)))
+    let port = cmd.output().ok().and_then(|output| {
+        parse_default_port_from_help(&String::from_utf8_lossy(&output.stdout)).or_else(|| {
+            parse_default_port_from_help(&String::from_utf8_lossy(&output.stderr))
+        })
+    });
+
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some(PortCacheEntry {
+            executable: path,
+            modified,
+            port,
+        });
+    }
+    port
 }
 
 /// The configured binary's own default port, for display before the first
@@ -452,7 +496,7 @@ fn terminate_child(child: &mut Child, _pid: u32) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_server(
     app_handle: AppHandle,
     state: State<StateLock>,
