@@ -11,6 +11,26 @@ pub const LOG_HISTORY_LIMIT: usize = 200;
 /// Default Web UI port used when no `--port`/`-p` arg is given.
 pub const DEFAULT_WEB_PORT: u16 = 8080;
 
+/// Owns a Windows Job Object configured with `KILL_ON_JOB_CLOSE`. Dropping it
+/// (normal stop, exit watcher, or process teardown) terminates any child still
+/// assigned to the job, including grandchildren.
+#[cfg(windows)]
+pub struct JobHandle(isize);
+
+#[cfg(windows)]
+impl JobHandle {
+    pub fn new(raw: isize) -> Self {
+        Self(raw)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0 as _) };
+    }
+}
+
 pub struct AppState {
     pub is_running: bool,
     pub server_pid: Option<u32>,
@@ -20,6 +40,9 @@ pub struct AppState {
     // Active run metadata for the API panel.
     pub model_alias: String,
     pub api_key: Option<String>,
+    /// Keeps the kill-on-close job alive for exactly as long as this run.
+    #[cfg(windows)]
+    pub process_job: Option<JobHandle>,
 }
 
 impl AppState {
@@ -32,6 +55,8 @@ impl AppState {
             log_history: VecDeque::new(),
             model_alias: String::new(),
             api_key: None,
+            #[cfg(windows)]
+            process_job: None,
         }
     }
 
@@ -51,6 +76,11 @@ impl AppState {
         self.model_alias.clear();
         self.api_key = None;
         self.process = None;
+        #[cfg(windows)]
+        {
+            // Closing the last job handle kills anything still assigned.
+            self.process_job = None;
+        }
     }
 }
 

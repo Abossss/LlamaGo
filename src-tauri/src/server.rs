@@ -12,6 +12,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::config;
 use crate::env;
+#[cfg(windows)]
+use crate::state::JobHandle;
 use crate::state::{AppState, DEFAULT_WEB_PORT, LOG_HISTORY_LIMIT};
 
 #[cfg(windows)]
@@ -342,6 +344,46 @@ pub fn server_default_web_port() -> Option<u16> {
 
 // ── Core spawn logic (shared with the tray menu) ─────────────────────
 
+/// Put the child in a job whose last-handle close kills every member. If the
+/// launcher is force-killed (Task Manager, crash), Windows closes the handle
+/// and llama-server + its workers die with it instead of orphaning the port.
+#[cfg(windows)]
+fn attach_job_object(child: &Child) -> Result<JobHandle, String> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return Err("创建 Job Object 失败".into());
+        }
+
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            std::ptr::addr_of!(info).cast(),
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+        if configured == 0 {
+            CloseHandle(job);
+            return Err("配置 Job Object 失败".into());
+        }
+
+        if AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0 {
+            CloseHandle(job);
+            return Err("将 llama-server 加入 Job Object 失败".into());
+        }
+        Ok(JobHandle::new(job as isize))
+    }
+}
+
 pub fn start_server_inner(
     app_handle: &AppHandle,
     state: &Mutex<AppState>,
@@ -374,9 +416,25 @@ pub fn start_server_inner(
     if let Some(key) = log_secret.as_deref() {
         cmd.env("LLAMA_API_KEY", key);
     }
+    // A fresh process group lets `terminate_child` signal the whole tree
+    // (llama-server workers included) instead of only the leader.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
     let mut child = cmd.spawn().map_err(|e| format!("启动失败: {}", e))?;
+
+    #[cfg(windows)]
+    let process_job = match attach_job_object(&child) {
+        Ok(job) => Some(job),
+        Err(e) => {
+            let _ = child.kill();
+            return Err(format!("启动失败: {}", e));
+        }
+    };
 
     let pid = child.id();
     let stdout = child.stdout.take().unwrap();
@@ -388,6 +446,10 @@ pub fn start_server_inner(
     s.is_running = true;
     s.server_pid = Some(pid);
     s.process = Some(child);
+    #[cfg(windows)]
+    {
+        s.process_job = process_job;
+    }
     s.model_alias = model_alias.to_string();
     s.api_key = api_key.map(|k| k.to_string());
     drop(s);
@@ -473,7 +535,9 @@ pub fn start_server_inner(
 fn terminate_child(child: &mut Child, _pid: u32) -> Result<(), String> {
     #[cfg(unix)]
     {
-        let _ = Command::new("kill").args(["-TERM", &_pid.to_string()]).status();
+        // Negative pid = the whole process group created at spawn time.
+        let group = format!("-{}", _pid);
+        let _ = Command::new("kill").args(["-TERM", &group]).status();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             if child.try_wait().map_err(|e| format!("等待进程退出失败: {}", e))?.is_some() {
@@ -484,7 +548,7 @@ fn terminate_child(child: &mut Child, _pid: u32) -> Result<(), String> {
             }
             thread::sleep(Duration::from_millis(100));
         }
-        let _ = Command::new("kill").args(["-KILL", &_pid.to_string()]).status();
+        let _ = Command::new("kill").args(["-KILL", &format!("-{}", _pid)]).status();
         let _ = child.kill();
         let _ = child.try_wait();
     }
@@ -738,6 +802,32 @@ mod tests {
             Some("http://127.0.0.1:9090")
         );
         assert_eq!(web_url_for(false, 8080), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn job_object_kills_child_when_handle_drops() {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "ping -n 60 127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let mut child = cmd.spawn().unwrap();
+
+        let job = attach_job_object(&child).unwrap();
+        drop(job);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if child.try_wait().unwrap().is_some() {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                let _ = child.kill();
+                panic!("child survived after the Job Object handle was closed");
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 
     #[test]
