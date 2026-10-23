@@ -12,7 +12,7 @@
     <img src="https://img.shields.io/badge/llama.cpp-enabled-%23FF7A00" alt="llama.cpp">
   <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20%7C%20Linux%20%7C%20macOS-lightgrey" alt="支持 Windows、Linux、macOS">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/release-v0.1.0-blue" alt="v0.1.0">
+  <img src="https://img.shields.io/badge/release-v0.2.0-blue" alt="v0.2.0">
   <img src="https://img.shields.io/badge/vue-3.x-%2342b883" alt="vue 3">
 </p>
 
@@ -36,10 +36,13 @@
 
 从 [Releases](https://github.com/Abossss/LlamaGo/releases) 下载对应安装包：
 
-| 包类型 | 文件                          | 适用场景           |
-| ------ | ----------------------------- | ------------------ |
-| NSIS   | `LlamaGo_0.1.0_x64-setup.exe` | 图形化安装（推荐） |
-| MSI    | `LlamaGo_0.1.0_x64.msi`       | 企业 / 静默部署    |
+| 平台    | 包类型   | 文件                          | 适用场景           |
+| ------- | -------- | ----------------------------- | ------------------ |
+| Windows | NSIS     | `LlamaGo_0.2.0_x64-setup.exe` | 图形化安装（推荐） |
+| Windows | MSI      | `LlamaGo_0.2.0_x64.msi`       | 企业 / 静默部署    |
+| macOS   | DMG      | `LlamaGo_0.2.0_*_*.dmg`       | 拖入「应用程序」   |
+| Linux   | AppImage | `*.AppImage`                  | 免安装，双击运行   |
+| Linux   | DEB      | `*.deb`                       | Debian / Ubuntu    |
 
 > 要求：Windows 10/11（WebView2 已内置）；Linux（WebKitGTK）；macOS（WKWebView）。
 
@@ -96,14 +99,14 @@
 
 「设置 → 高级参数」中的参数为**全局配置**，对所有模型生效，启动时按固定顺序拼接：
 
-| 参数 | 对应 CLI flag | 持久化位置 |
-| ---- | ------------ | ---------- |
-| Web 端口 | `--port` | `config.json` 的 `web_port` |
-| 模型别名（每个 `.gguf` 一个） | `--alias` | `config.json` 的 `model_aliases` |
-| API Key | 通过 `LLAMA_API_KEY` 环境变量传入 | `config.json` 的 `advanced.api_key` |
-| 上下文长度 | `-c` | `config.json` 的 `advanced.ctx_size` |
-| GPU 层数 | `-ngl` | `config.json` 的 `advanced.ngl` |
-| 其他启动参数 | 原样追加（支持引号） | `config.json` 的 `advanced.extra_args` |
+| 参数                          | 对应 CLI flag                     | 持久化位置                             |
+| ----------------------------- | --------------------------------- | -------------------------------------- |
+| Web 端口                      | `--port`                          | `config.json` 的 `web_port`            |
+| 模型别名（每个 `.gguf` 一个） | `--alias`                         | `config.json` 的 `model_aliases`       |
+| API Key                       | 通过 `LLAMA_API_KEY` 环境变量传入 | `config.json` 的 `advanced.api_key`    |
+| 上下文长度                    | `-c`                              | `config.json` 的 `advanced.ctx_size`   |
+| GPU 层数                      | `-ngl`                            | `config.json` 的 `advanced.ngl`        |
+| 其他启动参数                  | 原样追加（支持引号）              | `config.json` 的 `advanced.extra_args` |
 
 - **模型别名**：每个 `.gguf` 单独存一个短名，WebUI 里 `/v1/models` 显示的即别名（而非文件名）。
 - **API Key**：支持一键随机生成（32 字符 hex）+ 显示 / 复制；未设置时 llama-server 不要求认证。
@@ -162,13 +165,13 @@ LlamaGo 客户端分为「设置配置页」和「启动运行页」两大功能
 
 ### 托盘菜单
 
-| 菜单项         | 行为                                       |
-| -------------- | ------------------------------------------ |
+| 菜单项         | 行为                                                |
+| -------------- | --------------------------------------------------- |
 | 状态行（禁用） | 显示「服务器: 运行中 / 启动中 (PID x)」或「已停止」 |
-| 启动 / 停止    | 一键切换；启动时优先使用上次保存的模型     |
-| 打开 WebUI     | 仅服务运行时可用                           |
-| 显示主窗口     | 唤回主界面                                 |
-| 退出           | **先停服务，再退出进程**                   |
+| 启动 / 停止    | 一键切换；启动时优先使用上次保存的模型              |
+| 打开 WebUI     | 仅服务运行时可用                                    |
+| 显示主窗口     | 唤回主界面                                          |
+| 退出           | **先停服务，再退出进程**                            |
 
 ---
 
@@ -197,42 +200,53 @@ cargo tauri build      # 生产构建（先 npm run build 产出 frontend/dist�
 
 > 前端为标准 Vite 工程（`frontend/`）：Vue 3 SFC + 组合式 API + TypeScript，按 UI 语义拆分为多个组件（`src/components/*`），共享状态封装在 `src/composables/*`。
 
+### 自动发布
+
+推送 `v*` 标签会触发 `.github/workflows/build.yml`：在 Windows（x64）、Linux（x64）、macOS（Intel + Apple Silicon）上跑 fmt / clippy / test / typecheck，编译安装包并自动创建 GitHub Release（非草稿）。
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+在 Actions 页面手动 `workflow_dispatch` 时只编译并上传安装包 artifact，不会创建 Release。
+
 ---
 
 ## 接口清单
 
 ### 后端命令
 
-| 命令                     | 作用                                                       | 返回                           |
-| ------------------------ | ---------------------------------------------------------- | ------------------------------ |
-| `start_server`           | 启动 `llama-server`（args / 别名 / API Key）               | PID 字符串                     |
-| `stop_server`            | 停止服务                                                   | 终止信息                       |
-| `get_status`             | 查询运行状态                                               | `(running, ready, pid, port)`  |
-| `get_status_full`        | 查询运行状态（含别名 + API Key）                           | `{running, ready, pid, port, model_alias, api_key}` |
-| `check_config`           | 读取上次配置（含别名表 + 高级参数）                        | exec / model 路径 + aliases + advanced |
-| `save_config`            | 保存模型选择 + 别名 + 高级参数 + Web 端口                  | —                              |
-| `get_env_settings`       | 读取环境变量及有效性                                       | `llama_valid` / `exec_path` / `models_valid` |
-| `save_env_var`           | 校验并持久化环境变量                                       | —                              |
-| `suggest_models_path`    | 检测 `<llama.cpp>/models` 或上一级 `models` 是否存在       | 建议路径或 `null`              |
-| `scan_llama_cpp`         | 自动扫描 `llama.cpp` 目录                                  | 候选路径列表                   |
-| `cancel_scan`            | 取消扫描                                                   | —                              |
-| `list_models`            | 递归列出可加载的 `.gguf`（过滤 mmproj / 分片续片，排序）   | 路径列表                       |
-| `get_log_history`        | 获取后端最近 200 行日志                                    | 日志数组                       |
-| `pick_folder`            | 打开原生目录选择器                                         | 路径或 `null`                  |
-| `open_url`               | 用默认浏览器打开链接                                       | —                              |
-| `export_log`             | 通过保存对话框导出日志                                     | 保存路径或 `null`              |
+| 命令                  | 作用                                                     | 返回                                                |
+| --------------------- | -------------------------------------------------------- | --------------------------------------------------- |
+| `start_server`        | 启动 `llama-server`（args / 别名 / API Key）             | PID 字符串                                          |
+| `stop_server`         | 停止服务                                                 | 终止信息                                            |
+| `get_status`          | 查询运行状态                                             | `(running, ready, pid, port)`                       |
+| `get_status_full`     | 查询运行状态（含别名 + API Key）                         | `{running, ready, pid, port, model_alias, api_key}` |
+| `check_config`        | 读取上次配置（含别名表 + 高级参数）                      | exec / model 路径 + aliases + advanced              |
+| `save_config`         | 保存模型选择 + 别名 + 高级参数 + Web 端口                | —                                                   |
+| `get_env_settings`    | 读取环境变量及有效性                                     | `llama_valid` / `exec_path` / `models_valid`        |
+| `save_env_var`        | 校验并持久化环境变量                                     | —                                                   |
+| `suggest_models_path` | 检测 `<llama.cpp>/models` 或上一级 `models` 是否存在     | 建议路径或 `null`                                   |
+| `scan_llama_cpp`      | 自动扫描 `llama.cpp` 目录                                | 候选路径列表                                        |
+| `cancel_scan`         | 取消扫描                                                 | —                                                   |
+| `list_models`         | 递归列出可加载的 `.gguf`（过滤 mmproj / 分片续片，排序） | 路径列表                                            |
+| `get_log_history`     | 获取后端最近 200 行日志                                  | 日志数组                                            |
+| `pick_folder`         | 打开原生目录选择器                                       | 路径或 `null`                                       |
+| `open_url`            | 用默认浏览器打开链接                                     | —                                                   |
+| `export_log`          | 通过保存对话框导出日志                                   | 保存路径或 `null`                                   |
 
 ### 前端事件
 
-| 事件                         | 触发时机 / 负载                                   |
-| ---------------------------- | ------------------------------------------------- |
-| `log-line`                   | 每行 stdout/stderr（字符串）                      |
-| `process-exit`               | 非主动停止的进程退出 `{code, success}`            |
-| `server-started`             | spawn 成功（PID）                                 |
-| `server-ready`               | 日志报告 `server is listening`（PID）             |
-| `server-status`              | 运行状态变化 `{running, ready, pid, port}`        |
-| `scan-message` / `scan-done` | 扫描进度 / 完成                                   |
-| `toast`                      | 全局通知                                          |
+| 事件                         | 触发时机 / 负载                            |
+| ---------------------------- | ------------------------------------------ |
+| `log-line`                   | 每行 stdout/stderr（字符串）               |
+| `process-exit`               | 非主动停止的进程退出 `{code, success}`     |
+| `server-started`             | spawn 成功（PID）                          |
+| `server-ready`               | 日志报告 `server is listening`（PID）      |
+| `server-status`              | 运行状态变化 `{running, ready, pid, port}` |
+| `scan-message` / `scan-done` | 扫描进度 / 完成                            |
+| `toast`                      | 全局通知                                   |
 
 ---
 
